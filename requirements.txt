@@ -1,0 +1,13 @@
+# Pinned for reproducible installs — regenerate with:
+#   .venv/Scripts/pip freeze | grep -v "^-e" > requirements.txt
+certifi==2026.2.25
+charset-normalizer==3.4.7
+idna==3.12
+pillow==12.2.0
+PyMuPDF==1.27.2.2
+PySide6==6.11.0
+PySide6_Addons==6.11.0
+PySide6_Essentials==6.11.0
+requests==2.33.1
+shiboken6==6.11.0
+urllib3==2.6.3

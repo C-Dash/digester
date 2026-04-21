@@ -1,0 +1,2 @@
+Get lat lon from place validator
+look at the cdv colmn for relation -- should be docitem_id

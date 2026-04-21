@@ -1,0 +1,43 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Build / packaging artifacts
+dist/
+build/
+*.egg-info/
+*.spec
+
+# PyInstaller output
+*.exe
+
+# Test batch data (large, local only)
+CDB*/
+XCDB*/
+XXXCDB*/
+X/
+
+# Archives
+*.zip
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+
+# Claude Code project memory
+.claude/

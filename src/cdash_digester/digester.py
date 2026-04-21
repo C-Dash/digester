@@ -1,0 +1,760 @@
+"""
+CDASH Digester Module  (digester.py)
+
+The Digester is the main controller.  It:
+  - validates and initialises the batch folder structure
+  - orchestrates the folder and media scan pipeline
+  - provides helpers for interactive metadata assignment
+  - exports the four CSV output files
+
+The GUI runs Digester methods on a QThread worker so the UI stays
+responsive.  The log callback is the only coupling to the UI.
+
+CLI test harness
+----------------
+  python -m cdash_digester.digester
+Copies CDB260320-Test_batch to a temp folder, scans it, and prints the
+status summary.  The GUI is not launched.
+"""
+
+import csv
+import shutil
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Callable, List, Optional, Tuple
+
+from .cdash_objects import (
+    BatchDB, DOC_TYPES, ACCEPTED_SUFFIXES,
+    parse_batch_name, parse_folder_name, parse_media_name, slugify,
+)
+from .prescreener import screen_file
+from .validator import CDASHValidator
+
+
+class Digester:
+    """Orchestrates batch initialisation, scanning, and CSV export."""
+
+    def __init__(self, batch_path: Path,
+                 log: Callable[[str, str], None] = None):
+        self.batch_path = Path(batch_path)
+        self.log = log or (lambda msg, lvl: None)
+        self.db: Optional[BatchDB] = None
+        self._validator = CDASHValidator()
+
+    # ------------------------------------------------------------------ paths
+
+    @property
+    def catalog_path(self) -> Path:
+        return self.batch_path / "Catalog"
+
+    @property
+    def media_path(self) -> Path:
+        return self.batch_path / "Media"
+
+    @property
+    def db_path(self) -> Path:
+        return self.catalog_path / "batch_db.sqlite"
+
+    # ------------------------------------------------------------------ init
+
+    def load_or_initialize(self):
+        """Validate batch structure; open an existing DB or create a fresh one.
+
+        Does NOT scan media — that is a separate step (scan_batch).
+        Logs errors and returns without setting self.db if the folder is invalid.
+        """
+        parsed = parse_batch_name(self.batch_path.name)
+        if not parsed:
+            self.log(
+                f"Invalid batch folder name: '{self.batch_path.name}' "
+                f"(expected CDB<YYMMDD>-<name>)",
+                "error",
+            )
+            return
+
+        if not self.media_path.is_dir():
+            self.log("No 'Media' sub-folder found — cannot open batch.", "error")
+            return
+
+        # Create Catalog directory; stamp the existing log if one is present
+        if not self.catalog_path.exists():
+            self.catalog_path.mkdir()
+            self.log("Created Catalog folder.", "info")
+        else:
+            log_file = self.catalog_path / "batch.log"
+            if log_file.exists():
+                with open(log_file, "a", encoding="utf-8") as f:
+                    ts = datetime.now().isoformat(timespec="seconds")
+                    f.write(f"\n{'='*60}\nSession opened {ts}\n{'='*60}\n")
+
+        # Open or create the database
+        self.db = BatchDB(self.db_path)
+        self.db.create_all_tables()
+
+        if not self.db.get_batch():
+            self.db.upsert_batch(
+                batch_id=parsed["batch_id"],
+                name=parsed["name"],
+                batch_folder_path=str(self.batch_path),
+                initialized_date=datetime.now().date().isoformat(),
+            )
+            self.log(f"Batch {parsed['batch_id']} initialised.", "info")
+        else:
+            rejects = self.db.count_rejects()
+            self.log(
+                f"Batch {parsed['batch_id']} opened "
+                f"({rejects} reject(s) on record).",
+                "info",
+            )
+
+    # ------------------------------------------------------------------ scan
+
+    def scan_batch(self):
+        """Full batch scan: rebuild DB from scratch, scan all folders and media."""
+        if self.db is None:
+            self.log("No open batch — call load_or_initialize first.", "error")
+            return
+
+        parsed = parse_batch_name(self.batch_path.name)
+        if not parsed:
+            return
+
+        # Rebuild the database
+        self.db.close()
+        if self.db_path.exists():
+            self.db_path.unlink()
+        self.db = BatchDB(self.db_path)
+        self.db.create_all_tables()
+        self.db.upsert_batch(
+            batch_id=parsed["batch_id"],
+            name=parsed["name"],
+            batch_folder_path=str(self.batch_path),
+            initialized_date=datetime.now().date().isoformat(),
+        )
+        self.log(f"Scanning batch {parsed['batch_id']} …", "info")
+
+        folder_dirs = sorted(
+            p for p in self.media_path.iterdir() if p.is_dir()
+        )
+        for idx, folder_dir in enumerate(folder_dirs, start=1):
+            self._scan_folder(folder_dir, folder_index=idx,
+                              batch_id=parsed["batch_id"])
+
+        reject_count = self.db.count_rejects()
+        self.db.set_rejected_count(reject_count)
+        self.db.recalculate_batch_ready()
+        batch = self.db.get_batch()
+        self.log(
+            f"Scan complete — ready: {batch['ready']}, "
+            f"rejects: {reject_count}.",
+            "info",
+        )
+
+    def validate_folder(self, item_set_id: int):
+        """Re-scan a single folder (Folder → Scan Selected Folder)."""
+        if self.db is None:
+            return
+        folder_row = self.db.get_folder_by_item_set(item_set_id)
+        if not folder_row:
+            self.log(f"Folder {item_set_id} not found in DB.", "error")
+            return
+        folder_dir = self.media_path / folder_row["os_folder_name"]
+        if not folder_dir.is_dir():
+            self.log(f"Folder not found on disk: {folder_dir}", "error")
+            return
+
+        self._delete_folder_records(item_set_id)
+        self._scan_media_in_folder(
+            folder_dir, item_set_id,
+            batch_folder_id=folder_row.get("batch_folder_id") or "",
+        )
+        self.db.recalculate_batch_ready()
+        self.log(f"Re-scanned: {folder_row['os_folder_name']}", "info")
+
+    def _delete_folder_records(self, item_set_id: int):
+        """Remove media and doc records for one folder before re-scanning."""
+        con = self.db._con
+        con.execute("DELETE FROM cdash_media WHERE item_set_id=?", (item_set_id,))
+        con.execute("DELETE FROM cdash_doc   WHERE item_set_id=?", (item_set_id,))
+        con.commit()
+
+    # -------------------------------------------------- folder scan internals
+
+    def _scan_folder(self, folder_dir: Path, folder_index: int, batch_id: str):
+        self.log(f"Folder: {folder_dir.name}", "info")
+
+        parsed = parse_folder_name(folder_dir.name)
+        if not parsed:
+            self.log(
+                f"  Cannot parse folder name — skipping: {folder_dir.name}",
+                "warning",
+            )
+            return
+
+        item_set_id = parsed["item_set_id"]
+        batch_folder_id = f"{batch_id}F{folder_index}"
+
+        # Validate item_set_id via API
+        api_status, api_name = self._validator.validate_folder(item_set_id)
+        if "Valid" in api_status:
+            cdash_folder_name = slugify(api_name)
+            name_ready = True
+            self.log(f"  Validated folder: {api_name}", "info")
+        else:
+            self.log(f"  Folder ID {item_set_id}: {api_status}", "warning")
+            cdash_folder_name = parsed["slug"]
+            name_ready = False
+
+        # Rename folder to canonical form if necessary
+        canonical = f"F{folder_index}-{cdash_folder_name}-OF{item_set_id}"
+        if folder_dir.name != canonical:
+            new_path = folder_dir.parent / canonical
+            try:
+                folder_dir.rename(new_path)
+                self.log(f"  Renamed -> {canonical}", "info")
+                folder_dir = new_path
+            except OSError as exc:
+                self.log(f"  Rename failed: {exc}", "error")
+
+        self.db.upsert_folder(
+            item_set_id=item_set_id,
+            cdash_folder_name=cdash_folder_name,
+            os_folder_name=folder_dir.name,
+            batch_folder_id=batch_folder_id,
+            name_ready=name_ready,
+        )
+        self.db.assign_folder_index(item_set_id, folder_index)
+
+        self._scan_media_in_folder(folder_dir, item_set_id, batch_folder_id)
+
+    def _scan_media_in_folder(self, folder_dir: Path,
+                               item_set_id: int, batch_folder_id: str):
+        """Screen and register every accepted media file in one folder."""
+        rejects_root = self.batch_path / "Rejects"
+        reject_folder = rejects_root / folder_dir.name
+
+        media_files = sorted(
+            f for f in folder_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in ACCEPTED_SUFFIXES
+        )
+
+        # doc_index → {"doc_item_id", "place_slug", "doc_type", "page_count"}
+        doc_tracker: dict = {}
+        doc_seq = 0   # folder_doc_sequence counter
+
+        for filepath in media_files:
+            self.log(f"  {filepath.name}", "info")
+
+            # 1. Format screening
+            accepted, props = screen_file(filepath)
+            if not accepted:
+                rejects_root.mkdir(exist_ok=True)
+                reject_folder.mkdir(parents=True, exist_ok=True)
+                dest = reject_folder / filepath.name
+                shutil.move(str(filepath), str(dest))
+                self.db.insert_reject(
+                    item_set_id=item_set_id,
+                    filename=filepath.name,
+                    filepath=str(dest.relative_to(self.batch_path)),
+                    file_size_mb=props.get("file_size_mb"),
+                    pixel_width=props.get("pixel_width"),
+                    pixel_height=props.get("pixel_height"),
+                    color_mode=props.get("color_mode"),
+                    capture_date=props.get("capture_date"),
+                    qa_note=props.get("qa_note", ""),
+                )
+                self.log(f"    REJECTED: {props.get('qa_note')}", "warning")
+                continue
+
+            # 2. Name parsing
+            parsed = parse_media_name(filepath.stem)
+            rel_path = str(filepath.relative_to(self.batch_path))
+
+            if not parsed:
+                # Rudimentary name — register without doc association
+                self.db.insert_media(
+                    doc_item_id=None,
+                    item_set_id=item_set_id,
+                    filename=filepath.name,
+                    filepath=rel_path,
+                    capture_date=props.get("capture_date"),
+                    file_size_mb=props.get("file_size_mb"),
+                    pixel_width=props.get("pixel_width"),
+                    pixel_height=props.get("pixel_height"),
+                    format_note=props.get("color_mode"),
+                    ready=False,
+                    notes="Name not in ready format",
+                )
+                self.log("    Not-ready name.", "info")
+                continue
+
+            place_id = parsed["place_id"]
+            doc_index = parsed["doc_index"]
+            doc_type = parsed["doc_type"]
+            notes_parts: list = []
+
+            # 3. Place validation
+            place_name = None
+            if place_id is not None:
+                cached = self.db.get_place(place_id)
+                if cached:
+                    place_name = cached["place_name"]
+                else:
+                    p_status, p_props = self._validator.validate_place(place_id)
+                    if "Valid" in p_status and p_props:
+                        place_name = p_props.get("place_name") or parsed["place_slug"]
+                        self.db.upsert_place(
+                            place_item_id=place_id,
+                            place_name=place_name,
+                            place_type=p_props.get("place_type"),
+                            house_num=p_props.get("house_num"),
+                            street_name=p_props.get("street_name"),
+                            street_sort=p_props.get("street_sort"),
+                            neighborhood=p_props.get("neighborhood"),
+                            chc_dist=p_props.get("chc_dist"),
+                            item_set_ids=p_props.get("item_set_ids"),
+                            lat=p_props.get("lat"),
+                            lon=p_props.get("lon"),
+                        )
+                    else:
+                        self.log(f"    Place {place_id}: {p_status}", "error")
+                        notes_parts.append(f"Place {place_id}: {p_status}")
+                        place_name = parsed["place_slug"]
+
+            media_ready = place_id is not None and not notes_parts
+
+            # 4. Doc tracking / creation
+            if doc_index not in doc_tracker:
+                doc_seq += 1
+                batch_doc_id = (
+                    f"{batch_folder_id}-{parsed['place_slug']}-{doc_seq:04d}-{doc_type}"
+                )
+                doc_title = (
+                    f"{place_name or parsed['place_slug']} — "
+                    f"{DOC_TYPES.get(doc_type, doc_type)}"
+                )
+                doc_item_id = self.db.insert_doc(
+                    place_item_id=place_id,
+                    item_set_id=item_set_id,
+                    folder_doc_sequence=doc_seq,
+                    doc_type_code=doc_type,
+                    doc_title=doc_title,
+                    batch_doc_id=batch_doc_id,
+                    date_accepted=props.get("capture_date"),
+                    ready=media_ready,
+                )
+                doc_tracker[doc_index] = {
+                    "doc_item_id":  doc_item_id,
+                    "place_slug":   parsed["place_slug"],
+                    "doc_type":     doc_type,
+                    "doc_seq":      doc_seq,
+                    "page_count":   0,
+                }
+            else:
+                doc_item_id = doc_tracker[doc_index]["doc_item_id"]
+                if parsed["place_slug"] != doc_tracker[doc_index]["place_slug"]:
+                    msg = (
+                        f"doc_index {doc_index:04d} conflicts with existing "
+                        f"place name — skipped."
+                    )
+                    self.log(f"    ERROR: {msg}", "error")
+                    self.db.insert_media(
+                        doc_item_id=None,
+                        item_set_id=item_set_id,
+                        filename=filepath.name,
+                        filepath=rel_path,
+                        ready=False,
+                        notes=msg,
+                    )
+                    continue
+
+            # 5. Page number
+            doc_tracker[doc_index]["page_count"] += 1
+            page_num = doc_tracker[doc_index]["page_count"]
+            entry = doc_tracker[doc_index]
+            batch_media_id = (
+                f"{batch_folder_id}-{entry['place_slug']}"
+                f"_{entry['doc_seq']:04d}p{page_num:04d}-{entry['doc_type']}"
+            )
+            self.db.increment_doc_pages(doc_item_id, props.get("capture_date"))
+
+            # 6. Rename file when place is fully known
+            if place_id is not None and place_name:
+                new_stem = (
+                    f"{slugify(place_name)}_{doc_index:04d}p{page_num:04d}"
+                    f"-{doc_type}-OP{place_id}"
+                )
+                new_name = f"{new_stem}{filepath.suffix.lower()}"
+                if new_name != filepath.name:
+                    new_path = filepath.parent / new_name
+                    try:
+                        filepath.rename(new_path)
+                        filepath = new_path
+                        rel_path = str(filepath.relative_to(self.batch_path))
+                        self.log(f"    -> {new_name}", "info")
+                    except OSError as exc:
+                        self.log(f"    Rename failed: {exc}", "error")
+                        notes_parts.append(f"Rename failed: {exc}")
+
+            # 7. Register media
+            self.db.insert_media(
+                doc_item_id=doc_item_id,
+                item_set_id=item_set_id,
+                filename=filepath.name,
+                filepath=rel_path,
+                batch_media_id=batch_media_id,
+                page_num=page_num,
+                capture_date=props.get("capture_date"),
+                file_size_mb=props.get("file_size_mb"),
+                pixel_width=props.get("pixel_width"),
+                pixel_height=props.get("pixel_height"),
+                format_note=props.get("color_mode"),
+                ready=media_ready,
+                notes=", ".join(notes_parts),
+            )
+
+        self.db.recalculate_folder_status(item_set_id)
+
+    # ---------------------------------------------------------- place helper
+
+    def validate_place(self, place_id: int) -> Tuple[str, str]:
+        """Validate a place ID, register in DB if valid.
+        Returns (status, place_name).
+        """
+        if self.db:
+            cached = self.db.get_place(place_id)
+            if cached:
+                return "Valid CDASH place (cached)", cached["place_name"]
+
+        status, props = self._validator.validate_place(place_id)
+        if "Valid" in status and props and self.db:
+            place_name = props.get("place_name", "")
+            self.db.upsert_place(
+                place_item_id=place_id,
+                place_name=place_name,
+                place_type=props.get("place_type"),
+                house_num=props.get("house_num"),
+                street_name=props.get("street_name"),
+                street_sort=props.get("street_sort"),
+                neighborhood=props.get("neighborhood"),
+                chc_dist=props.get("chc_dist"),
+                item_set_ids=props.get("item_set_ids"),
+                lat=props.get("lat"),
+                lon=props.get("lon"),
+            )
+            return status, place_name
+        return status, ""
+
+    # -------------------------------------------------- interactive assign
+
+    def assign_media_to_doc(self, media_ids: List[int], place_id: int,
+                            doc_type_code: str, is_multi_page: bool) -> bool:
+        """Assign selected media files to a new document.
+
+        is_multi_page=True  → all files become pages of one document.
+        is_multi_page=False → each file becomes a separate single-page document.
+        Returns True on success.
+        """
+        if not self.db:
+            return False
+
+        p_status, place_name = self.validate_place(place_id)
+        if "Valid" not in p_status:
+            self.log(f"Place validation failed: {p_status}", "error")
+            return False
+
+        first = self.db.get_media(media_ids[0])
+        if not first:
+            return False
+        item_set_id = first["item_set_id"]
+
+        folder_row = self.db.get_folder_by_item_set(item_set_id)
+        batch_folder_id = (folder_row.get("batch_folder_id") or "") if folder_row else ""
+
+        docs = self.db.get_docs_for_folder(item_set_id)
+        next_seq = max((d["folder_doc_sequence"] for d in docs), default=0) + 1
+        doc_title = f"{place_name} — {DOC_TYPES.get(doc_type_code, doc_type_code)}"
+        place_slug = slugify(place_name)
+
+        try:
+            if is_multi_page:
+                batch_doc_id = (
+                    f"{batch_folder_id}-{place_slug}-{next_seq:04d}-{doc_type_code}"
+                )
+                doc_id = self.db.insert_doc(
+                    place_item_id=place_id,
+                    item_set_id=item_set_id,
+                    folder_doc_sequence=next_seq,
+                    doc_type_code=doc_type_code,
+                    doc_title=doc_title,
+                    batch_doc_id=batch_doc_id,
+                    ready=True,
+                )
+                for page_num, media_id in enumerate(sorted(media_ids), start=1):
+                    batch_media_id = (
+                        f"{batch_folder_id}-{place_slug}"
+                        f"_{next_seq:04d}p{page_num:04d}-{doc_type_code}"
+                    )
+                    self.db.assign_media_to_doc(media_id, doc_id, page_num,
+                                                batch_media_id)
+                    self._rename_media(media_id, place_id, place_slug,
+                                       next_seq, page_num, doc_type_code)
+                    self.db.set_media_status(media_id, True)
+                self.db.renumber_doc_pages(doc_id)
+            else:
+                for page_num, media_id in enumerate(sorted(media_ids), start=1):
+                    batch_doc_id = (
+                        f"{batch_folder_id}-{place_slug}-{next_seq:04d}-{doc_type_code}"
+                    )
+                    doc_id = self.db.insert_doc(
+                        place_item_id=place_id,
+                        item_set_id=item_set_id,
+                        folder_doc_sequence=next_seq,
+                        doc_type_code=doc_type_code,
+                        doc_title=doc_title,
+                        batch_doc_id=batch_doc_id,
+                        ready=True,
+                    )
+                    batch_media_id = (
+                        f"{batch_folder_id}-{place_slug}"
+                        f"_{next_seq:04d}p0001-{doc_type_code}"
+                    )
+                    self.db.assign_media_to_doc(media_id, doc_id, 1,
+                                                batch_media_id)
+                    self._rename_media(media_id, place_id, place_slug,
+                                       next_seq, 1, doc_type_code)
+                    self.db.set_media_status(media_id, True)
+                    self.db.renumber_doc_pages(doc_id)
+                    next_seq += 1
+
+            self.db.recalculate_folder_status(item_set_id)
+            self.db.recalculate_batch_ready()
+            return True
+
+        except Exception as exc:
+            self.log(f"assign_media_to_doc failed: {exc}", "error")
+            return False
+
+    def _rename_media(self, media_id: int, place_id: int, place_slug: str,
+                      doc_seq: int, page_num: int, doc_type: str):
+        row = self.db.get_media(media_id)
+        if not row:
+            return
+        old_path = self.batch_path / row["filepath"]
+        new_name = (
+            f"{place_slug}_{doc_seq:04d}p{page_num:04d}"
+            f"-{doc_type}-OP{place_id}{old_path.suffix.lower()}"
+        )
+        new_path = old_path.parent / new_name
+        try:
+            if old_path != new_path:
+                old_path.rename(new_path)
+            self.db.update_media_filename(
+                media_id, new_name,
+                str(new_path.relative_to(self.batch_path)),
+            )
+        except OSError as exc:
+            self.log(f"  Rename failed for {row['filename']}: {exc}", "error")
+
+    # ----------------------------------------------------------------- status
+
+    def get_status_summary(self) -> str:
+        if not self.db:
+            return "No batch open."
+        batch = self.db.get_batch()
+        if not batch:
+            return "No batch record in DB."
+        folders = self.db.get_folders()
+        n_ready = sum(1 for f in folders if f["name_ready"] and f["media_ready"])
+        lines = [
+            f"Batch:   {batch['batch_id']}  ready={batch['ready']}",
+            f"Folders: {n_ready}/{len(folders)} ready",
+            f"Rejects: {batch.get('rejected_count', 0)}",
+            "",
+        ]
+        for f in folders:
+            lines.append(
+                f"  {f['os_folder_name']:<45s}"
+                f"  name={'ok' if f['name_ready'] else 'NO':2s}"
+                f"  media={'ok' if f['media_ready'] else 'NO'}"
+            )
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------ CSV
+
+    def export_csv(self):
+        """Export batch.csv, place.csv, document.csv, media.csv to Catalog/."""
+        if not self.db:
+            self.log("No open batch.", "error")
+            return
+        batch = self.db.get_batch()
+        if not batch or not batch["ready"]:
+            self.log("Batch is not Ready — CSV export skipped.", "warning")
+            return
+        self._write_batch_csv(batch)
+        self._write_place_csv()
+        self._write_document_csv()
+        self._write_media_csv()
+        self.log("CSV files written to Catalog/.", "info")
+
+    def _write_batch_csv(self, batch: dict):
+        out = self.catalog_path / "batch.csv"
+        with open(out, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=[
+                "id", "batch_id", "mnemonic_name", "batch_folder_path",
+                "initialized_date", "status", "qa_note",
+            ])
+            w.writeheader()
+            w.writerow({
+                "id":                batch["id"],
+                "batch_id":          batch["batch_id"],
+                "mnemonic_name":     batch["name"],
+                "batch_folder_path": batch["batch_folder_path"],
+                "initialized_date":  batch["initialized_date"],
+                "status":            "go" if batch["ready"] else "no-go",
+                "qa_note":           batch.get("note", ""),
+            })
+
+    def _write_place_csv(self):
+        out = self.catalog_path / "place.csv"
+        rows = self.db._con.execute("SELECT * FROM cdash_place").fetchall()
+        with open(out, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=[
+                "resourceTemplate", "resourceClass", "identifier",
+                "placeItem", "placeName", "PlaceItemID", "placeType",
+                "lat", "lon", "houseNum", "streetName", "streetSort",
+                "Neighborhood", "chcDist",
+            ])
+            w.writeheader()
+            for p in rows:
+                w.writerow({
+                    "resourceTemplate": "CDASH Place",
+                    "resourceClass":    "dcterms:Location",
+                    "identifier":       p["place_item_id"],
+                    "placeItem":        p["place_name"],
+                    "placeName":        p["place_name"],
+                    "PlaceItemID":      p["place_item_id"],
+                    "placeType":        p["place_type"],
+                    "lat":              p["lat"],
+                    "lon":              p["lon"],
+                    "houseNum":         p["house_num"],
+                    "streetName":       p["street_name"],
+                    "streetSort":       p["street_sort"],
+                    "Neighborhood":     p["neighborhood"],
+                    "chcDist":          p["chc_dist"],
+                })
+
+    def _write_document_csv(self):
+        out = self.catalog_path / "document.csv"
+        rows = self.db._con.execute(
+            """SELECT d.*,
+                      p.place_name, p.street_sort, p.neighborhood,
+                      p.chc_dist, p.lat AS place_lat, p.lon AS place_lon,
+                      f.cdash_folder_name,
+                      f.item_set_id AS folder_item_set_id
+               FROM cdash_doc d
+               LEFT JOIN cdash_place  p ON d.place_item_id = p.place_item_id
+               LEFT JOIN cdash_folder f ON d.item_set_id   = f.item_set_id
+               ORDER BY f.folder_number, d.folder_doc_sequence"""
+        ).fetchall()
+        with open(out, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=[
+                "resourceTemplate", "resourceClass", "identifier", "title",
+                "Type", "bibliographicCitation", "rights",
+                "placeitem", "placeItemID", "Folder", "ItemSetID",
+                "numPages", "streetsort", "Neighborhood", "chcDist",
+                "dateAccepted", "lat", "lon",
+            ])
+            w.writeheader()
+            for d in rows:
+                w.writerow({
+                    "resourceTemplate":    "CDASH Document",
+                    "resourceClass":       "bibo:Document",
+                    "identifier":          d["batch_doc_id"],
+                    "title":               d["doc_title"],
+                    "Type":                d["doc_type_description"],
+                    "bibliographicCitation": (
+                        "Cambridge Historical Commission, "
+                        "Digital Architectural Survey and History."
+                    ),
+                    "rights":              "Rights status not evaluated.",
+                    "placeitem":           d["place_name"],
+                    "placeItemID":         d["place_item_id"],
+                    "Folder":              d["cdash_folder_name"],
+                    "ItemSetID":           d["folder_item_set_id"],
+                    "numPages":            d["num_pages"],
+                    "streetsort":          d["street_sort"],
+                    "Neighborhood":        d["neighborhood"],
+                    "chcDist":             d["chc_dist"],
+                    "dateAccepted":        d["date_accepted"],
+                    "lat":                 d["place_lat"],
+                    "lon":                 d["place_lon"],
+                })
+
+    def _write_media_csv(self):
+        out = self.catalog_path / "media.csv"
+        rows = self.db._con.execute(
+            """SELECT m.*, d.doc_type_code, d.batch_doc_id
+               FROM cdash_media m
+               LEFT JOIN cdash_doc d ON m.doc_item_id = d.doc_item_id
+               ORDER BY m.item_set_id, m.filename"""
+        ).fetchall()
+        with open(out, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=[
+                "ResourceTemplate", "Title", "identifier",
+                "Relation", "type", "Source", "number", "dateAccepted",
+            ])
+            w.writeheader()
+            for m in rows:
+                w.writerow({
+                    "ResourceTemplate": "CDASH Media",
+                    "Title":            m["filename"],
+                    "identifier":       m["batch_media_id"] or "",
+                    "Relation":         m["batch_doc_id"] or "",
+                    "type":             m["doc_type_code"] or "",
+                    "Source":           m["filepath"],
+                    "number":           m["page_num"],
+                    "dateAccepted":     m["capture_date"],
+                })
+
+    def reopen_db(self):
+        """No-op — kept for API compatibility. check_same_thread=False is set
+        on the connection so the DB is usable from any thread sequentially."""
+        pass
+
+    # ------------------------------------------------------------------ close
+
+    def close(self):
+        self._validator.close()
+        if self.db:
+            self.db.close()
+
+
+# ---------------------------------------------------------------------------
+# CLI test harness
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import tempfile
+
+    # Locate the test batch (two levels up from src/cdash_digester/)
+    _project_root = Path(__file__).parent.parent.parent
+    _src = _project_root / "CDB260320-Test_batch"
+    if not _src.is_dir():
+        print(f"Test batch not found: {_src}")
+        sys.exit(1)
+
+    _tmp = Path(tempfile.mkdtemp()) / _src.name
+    shutil.copytree(str(_src), str(_tmp))
+    print(f"Test batch copied to: {_tmp}\n")
+
+    def _log(msg: str, level: str = "info"):
+        print(f"[{level.upper():7s}] {msg}")
+
+    digester = Digester(_tmp, _log)
+    digester.load_or_initialize()
+    digester.scan_batch()
+    print()
+    print(digester.get_status_summary())
+    digester.close()
