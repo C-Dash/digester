@@ -24,6 +24,7 @@ Rejection criteria
 
 import csv
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Tuple
 
@@ -44,7 +45,7 @@ _ACCEPTED_SUFFIXES = {".jpg", ".jpeg", ".tif", ".tiff", ".pdf"}
 
 _REJECTS_FIELDS = [
     "filename", "filepath", "file_size_mb", "pixel_width", "pixel_height",
-    "color_mode", "capture_date", "status", "qa_note",
+    "color_mode", "capture_date", "date_source", "status", "qa_note",
 ]
 
 
@@ -52,8 +53,11 @@ _REJECTS_FIELDS = [
 # Low-level file screening
 # ---------------------------------------------------------------------------
 
-def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str]:
-    """Return (ok, message) for PDF/A-1b conformance via XMP marker."""
+def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
+    """Return (ok, message, flavor) for PDF/A-1b conformance via XMP marker.
+
+    flavor is "PDF/A-1b" when the conformance marker is present, "PDF" otherwise.
+    """
     try:
         doc = fitz.open(str(filepath))
         xmp = doc.get_xml_metadata() or ""
@@ -62,12 +66,12 @@ def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str]:
             "<pdfaid:conformance>B</pdfaid:conformance>" in xmp
             or "<pdfaid:conformance>b</pdfaid:conformance>" in xmp
         ):
-            return True, "PDF/A-1b confirmed"
-        # pbc flipped the following to true because we want the note, but not 
+            return True, "PDF/A-1b confirmed", "PDF/A-1b"
+        # pbc flipped the following to true because we want the note, but not
         # to reject.
-        return True, "PDF/A-1b conformance marker not found in XMP metadata"
+        return True, "PDF/A-1b conformance marker not found in XMP metadata", "PDF"
     except Exception as exc:
-        return False, f"PDF error: {exc}"
+        return False, f"PDF error: {exc}", "PDF"
 
 
 def screen_file(filepath: Path) -> Tuple[bool, dict]:
@@ -86,6 +90,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         "pixel_height": None,
         "color_mode":   None,
         "capture_date": None,
+        "date_source":  None,
         "qa_note":      "",
     }
 
@@ -108,8 +113,9 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
 
     # PDF path
     if suffix == ".pdf":
-        ok, msg = _check_pdf_a1b(filepath)
-        props["qa_note"] = msg
+        ok, msg, flavor = _check_pdf_a1b(filepath)
+        props["qa_note"]    = msg
+        props["color_mode"] = flavor
         # Extract creation date from PDF metadata: "D:YYYYMMDDHHmmSS..."
         try:
             doc = fitz.open(str(filepath))
@@ -118,8 +124,14 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             if raw.startswith("D:") and len(raw) >= 10:
                 digits = raw[2:10]   # YYYYMMDD
                 props["capture_date"] = f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+                props["date_source"]  = "pdf"
         except Exception:
             pass
+        if props["capture_date"] is None:
+            props["capture_date"] = datetime.fromtimestamp(
+                filepath.stat().st_ctime
+            ).strftime("%Y-%m-%d")
+            props["date_source"] = "filesystem"
         return ok, props
 
     # Image path (JPEG / TIFF)
@@ -149,8 +161,14 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             raw = exif.get(36867) or exif.get(306)
             if raw:
                 props["capture_date"] = raw[:10].replace(":", "-")
+                props["date_source"]  = "exif"
     except Exception:
         pass
+    if props["capture_date"] is None:
+        props["capture_date"] = datetime.fromtimestamp(
+            filepath.stat().st_ctime
+        ).strftime("%Y-%m-%d")
+        props["date_source"] = "filesystem"
 
     # Format-specific checks
     if suffix in (".jpg", ".jpeg"):
@@ -221,6 +239,7 @@ class MediaPrescreener:
                 props["pixel_height"],
                 props["color_mode"],
                 props["capture_date"],
+                props["date_source"],
             )
             self.db.set_media_status(row["media_id"], status, props["qa_note"])
 
@@ -237,6 +256,7 @@ class MediaPrescreener:
                     pixel_height=props["pixel_height"],
                     color_mode=props["color_mode"],
                     capture_date=props["capture_date"],
+                    date_source=props["date_source"],
                     qa_note=props["qa_note"],
                 )
                 self._reject_rows.append({
@@ -247,6 +267,7 @@ class MediaPrescreener:
                     "pixel_height": props["pixel_height"],
                     "color_mode":   props["color_mode"],
                     "capture_date": props["capture_date"],
+                    "date_source":  props["date_source"],
                     "status":       False,
                     "qa_note":      props["qa_note"],
                 })

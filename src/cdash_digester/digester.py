@@ -693,6 +693,7 @@ class Digester:
             w = csv.DictWriter(f, fieldnames=[
                 "ResourceTemplate", "Title", "identifier",
                 "Relation", "type", "Source", "number", "dateAccepted",
+                "format_note",
             ])
             w.writeheader()
             for m in rows:
@@ -705,6 +706,7 @@ class Digester:
                     "Source":           m["filepath"],
                     "number":           m["page_num"],
                     "dateAccepted":     m["capture_date"],
+                    "format_note":      m["format_note"] or "",
                 })
 
     def reopen_db(self):

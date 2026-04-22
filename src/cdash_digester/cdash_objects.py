@@ -222,6 +222,7 @@ class BatchDB:
                 filepath       TEXT,
                 page_num     INTEGER,
                 capture_date TEXT,
+                date_source  TEXT,
                 file_size_mb REAL,
                 pixel_width  INTEGER,
                 pixel_height INTEGER,
@@ -516,14 +517,15 @@ class BatchDB:
                                        pixel_width: int,
                                        pixel_height: int,
                                        color_mode: str,
-                                       capture_date: str):
+                                       capture_date: str,
+                                       date_source: str = None):
         self._con.execute(
             """UPDATE cdash_media
                SET file_size_mb=?, pixel_width=?, pixel_height=?,
-                   format_note=?, capture_date=?
+                   format_note=?, capture_date=?, date_source=?
                WHERE media_id=?""",
             (file_size_mb, pixel_width, pixel_height,
-             color_mode, capture_date, media_id),
+             color_mode, capture_date, date_source, media_id),
         )
         self._con.commit()
 
