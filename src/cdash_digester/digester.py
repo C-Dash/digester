@@ -18,7 +18,6 @@ status summary.  The GUI is not launched.
 """
 
 import csv
-import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -101,10 +100,10 @@ class Digester:
             )
             self.log(f"Batch {parsed['batch_id']} initialised.", "info")
         else:
-            rejects = self.db.count_rejects()
+            not_ready = self.db.count_not_ready_media()
             self.log(
                 f"Batch {parsed['batch_id']} opened "
-                f"({rejects} reject(s) on record).",
+                f"({not_ready} not-ready file(s) on record).",
                 "info",
             )
 
@@ -141,13 +140,13 @@ class Digester:
             self._scan_folder(folder_dir, folder_index=idx,
                               batch_id=parsed["batch_id"])
 
-        reject_count = self.db.count_rejects()
-        self.db.set_rejected_count(reject_count)
+        not_ready = self.db.count_not_ready_media()
+        self.db.set_rejected_count(not_ready)
         self.db.recalculate_batch_ready()
         batch = self.db.get_batch()
         self.log(
             f"Scan complete — ready: {batch['ready']}, "
-            f"rejects: {reject_count}.",
+            f"not-ready files: {not_ready}.",
             "info",
         )
 
@@ -230,10 +229,12 @@ class Digester:
 
     def _scan_media_in_folder(self, folder_dir: Path,
                                item_set_id: int, batch_folder_id: str):
-        """Screen and register every accepted media file in one folder."""
-        rejects_root = self.batch_path / "Rejects"
-        reject_folder = rejects_root / folder_dir.name
+        """Screen and register every media file in one folder.
 
+        Format-rejected files stay in place; their issues are recorded in
+        cdash_media.notes and they continue through name parsing and place
+        validation so all problems are captured in a single scan.
+        """
         media_files = sorted(
             f for f in folder_dir.iterdir()
             if f.is_file() and f.suffix.lower() in ACCEPTED_SUFFIXES
@@ -245,34 +246,20 @@ class Digester:
 
         for filepath in media_files:
             self.log(f"  {filepath.name}", "info")
+            notes_parts: list = []
 
             # 1. Format screening
             accepted, props = screen_file(filepath)
             if not accepted:
-                rejects_root.mkdir(exist_ok=True)
-                reject_folder.mkdir(parents=True, exist_ok=True)
-                dest = reject_folder / filepath.name
-                shutil.move(str(filepath), str(dest))
-                self.db.insert_reject(
-                    item_set_id=item_set_id,
-                    filename=filepath.name,
-                    filepath=str(dest.relative_to(self.batch_path)),
-                    file_size_mb=props.get("file_size_mb"),
-                    pixel_width=props.get("pixel_width"),
-                    pixel_height=props.get("pixel_height"),
-                    color_mode=props.get("color_mode"),
-                    capture_date=props.get("capture_date"),
-                    qa_note=props.get("qa_note", ""),
-                )
-                self.log(f"    REJECTED: {props.get('qa_note')}", "warning")
-                continue
+                notes_parts.append(props.get("qa_note", "Format rejected"))
+                self.log(f"    Format issue: {props.get('qa_note')}", "warning")
 
             # 2. Name parsing
             parsed = parse_media_name(filepath.stem)
             rel_path = str(filepath.relative_to(self.batch_path))
 
             if not parsed:
-                # Rudimentary name — register without doc association
+                notes_parts.append("Name not in ready format")
                 self.db.insert_media(
                     doc_item_id=None,
                     item_set_id=item_set_id,
@@ -284,7 +271,7 @@ class Digester:
                     pixel_height=props.get("pixel_height"),
                     format_note=props.get("color_mode"),
                     ready=False,
-                    notes="Name not in ready format",
+                    notes=", ".join(notes_parts),
                 )
                 self.log("    Not-ready name.", "info")
                 continue
@@ -292,7 +279,6 @@ class Digester:
             place_id = parsed["place_id"]
             doc_index = parsed["doc_index"]
             doc_type = parsed["doc_type"]
-            notes_parts: list = []
 
             # 3. Place validation
             place_name = None
@@ -322,7 +308,10 @@ class Digester:
                         notes_parts.append(f"Place {place_id}: {p_status}")
                         place_name = parsed["place_slug"]
 
-            media_ready = place_id is not None and not notes_parts
+            if place_id is None:
+                notes_parts.append("No place ID in filename")
+
+            media_ready = not notes_parts
 
             # 4. Doc tracking / creation
             if doc_index not in doc_tracker:
@@ -379,8 +368,8 @@ class Digester:
             )
             self.db.increment_doc_pages(doc_item_id, props.get("capture_date"))
 
-            # 6. Rename file when place is fully known
-            if place_id is not None and place_name:
+            # 6. Rename file only when format is ok and place is fully known
+            if accepted and place_id is not None and place_name:
                 new_stem = (
                     f"{slugify(place_name)}_{doc_index:04d}p{page_num:04d}"
                     f"-{doc_type}-OP{place_id}"
@@ -570,7 +559,7 @@ class Digester:
         lines = [
             f"Batch:   {batch['batch_id']}  ready={batch['ready']}",
             f"Folders: {n_ready}/{len(folders)} ready",
-            f"Rejects: {batch.get('rejected_count', 0)}",
+            f"Not ready: {batch.get('rejected_count', 0)}",
             "",
         ]
         for f in folders:
@@ -736,6 +725,7 @@ class Digester:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import shutil
     import tempfile
 
     # Locate the test batch (two levels up from src/cdash_digester/)

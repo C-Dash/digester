@@ -229,22 +229,6 @@ class BatchDB:
                 ready        INTEGER DEFAULT 0,
                 notes        TEXT
             )""",
-            # ------ rejects  (same shape as cdash_media)
-            """CREATE TABLE IF NOT EXISTS media_rejects (
-                media_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-                doc_item_id  INTEGER,
-                item_set_id  INTEGER,
-                filename     TEXT,
-                filepath     TEXT,
-                page_num     INTEGER,
-                capture_date TEXT,
-                file_size_mb REAL,
-                pixel_width  INTEGER,
-                pixel_height INTEGER,
-                format_note  TEXT,
-                ready        INTEGER DEFAULT 0,
-                notes        TEXT
-            )""",
         ]
         for stmt in stmts:
             self._con.execute(stmt)
@@ -569,24 +553,10 @@ class BatchDB:
 
     # --------------------------------------------------------------- rejects
 
-    def insert_reject(self, item_set_id: int, filename: str, filepath: str,
-                      file_size_mb: float = None, pixel_width: int = None,
-                      pixel_height: int = None, color_mode: str = None,
-                      capture_date: str = None, qa_note: str = ""):
-        self._con.execute(
-            """INSERT INTO media_rejects
-               (item_set_id, filename, filepath, file_size_mb,
-                pixel_width, pixel_height, format_note, capture_date,
-                ready, notes)
-               VALUES (?,?,?,?,?,?,?,?,0,?)""",
-            (item_set_id, filename, filepath, file_size_mb,
-             pixel_width, pixel_height, color_mode, capture_date, qa_note),
-        )
-        self._con.commit()
-
-    def count_rejects(self) -> int:
+    def count_not_ready_media(self) -> int:
+        """Count media files with ready=False across all folders."""
         row = self._con.execute(
-            "SELECT COUNT(*) AS n FROM media_rejects"
+            "SELECT COUNT(*) AS n FROM cdash_media WHERE ready=0"
         ).fetchone()
         return row["n"] if row else 0
 
