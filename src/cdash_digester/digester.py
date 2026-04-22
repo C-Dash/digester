@@ -197,7 +197,7 @@ class Digester:
         # Validate item_set_id via API
         api_status, api_name = self._validator.validate_folder(item_set_id)
         if "Valid" in api_status:
-            cdash_folder_name = slugify(api_name)
+            cdash_folder_name = api_name
             name_ready = True
             self.log(f"  Validated folder: {api_name}", "info")
         else:
@@ -206,7 +206,7 @@ class Digester:
             name_ready = False
 
         # Rename folder to canonical form if necessary
-        canonical = f"F{folder_index}-{cdash_folder_name}-OF{item_set_id}"
+        canonical = f"F{folder_index}-{slugify(cdash_folder_name)}-OF{item_set_id}"
         if folder_dir.name != canonical:
             new_path = folder_dir.parent / canonical
             try:
@@ -582,6 +582,7 @@ class Digester:
             self.log("Batch is not Ready — CSV export skipped.", "warning")
             return
         self._write_batch_csv(batch)
+        self._write_folder_csv()
         self._write_place_csv()
         self._write_document_csv()
         self._write_media_csv()
@@ -605,15 +606,41 @@ class Digester:
                 "qa_note":           batch.get("note", ""),
             })
 
+    def _write_folder_csv(self):
+        out = self.catalog_path / "folder.csv"
+        rows = self.db._con.execute(
+            "SELECT * FROM cdash_folder ORDER BY folder_number"
+        ).fetchall()
+        with open(out, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=[
+                "ResourceTemplate", "ResourceClass", "folder", "itemSetID",
+            ])
+            w.writeheader()
+            for r in rows:
+                w.writerow({
+                    "ResourceTemplate": "CDASH Folder",
+                    "ResourceClass":    "bibo:Collection",
+                    "folder":           r["cdash_folder_name"],
+                    "itemSetID":        r["item_set_id"],
+                })
+
     def _write_place_csv(self):
         out = self.catalog_path / "place.csv"
-        rows = self.db._con.execute("SELECT * FROM cdash_place").fetchall()
+        rows = self.db._con.execute(
+            """SELECT p.*,
+                      f.cdash_folder_name,
+                      f.item_set_id AS folder_item_set_id
+               FROM cdash_place p
+               LEFT JOIN cdash_doc d ON d.place_item_id = p.place_item_id
+               LEFT JOIN cdash_folder f ON f.item_set_id = d.item_set_id
+               GROUP BY p.place_item_id"""
+        ).fetchall()
         with open(out, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=[
                 "resourceTemplate", "resourceClass", "identifier",
                 "placeItem", "placeName", "PlaceItemID", "placeType",
                 "lat", "lon", "houseNum", "streetName", "streetSort",
-                "Neighborhood", "chcDist",
+                "Neighborhood", "chcDist", "Folder", "ItemSetID",
             ])
             w.writeheader()
             for p in rows:
@@ -632,6 +659,8 @@ class Digester:
                     "streetSort":       p["street_sort"],
                     "Neighborhood":     p["neighborhood"],
                     "chcDist":          p["chc_dist"],
+                    "Folder":           p["cdash_folder_name"] or "",
+                    "ItemSetID":        p["folder_item_set_id"] or "",
                 })
 
     def _write_document_csv(self):
@@ -703,7 +732,7 @@ class Digester:
                     "identifier":       m["batch_media_id"] or "",
                     "Relation":         m["batch_doc_id"] or "",
                     "type":             m["doc_type_code"] or "",
-                    "Source":           m["filepath"],
+                    "Source":           self.batch_path.name + "/" + m["filepath"].replace("\\", "/"),
                     "number":           m["page_num"],
                     "dateAccepted":     m["capture_date"],
                     "format_note":      m["format_note"] or "",

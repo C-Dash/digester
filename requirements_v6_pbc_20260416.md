@@ -477,6 +477,16 @@ Produced by `Digester.export_csv()` when `batch.ready = True`. Written to `Catal
 | `status` | `"go"` if `ready`, else `"no-go"` |
 | `qa_note` | `cdash_batch.note` |
 
+### `folder.csv`
+| Column | Source |
+|---|---|
+|`ResourceTemplate` | `"CDASH Folder"` |
+|`ResourceClass` | `"bibo:Collection"` |
+|`folder`        | `cdash_folder_name` |
+|`itemSetID`     | `item_set_id` |
+
+
+
 ### `place.csv`
 
 | Column | Source |
@@ -490,6 +500,8 @@ Produced by `Digester.export_csv()` when `batch.ready = True`. Written to `Catal
 | `placeType` | `place_type` |
 | `lat` | `lat` |
 | `lon` | `lon` |
+| `Folder` | `cdash_folder_name` |
+| `ItemSetID` | `folder.item_set_id` |
 | `houseNum` | `house_num` |
 | `streetName` | `street_name` |
 | `streetSort` | `street_sort` |
