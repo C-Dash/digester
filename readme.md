@@ -1,5 +1,5 @@
 # CDASH Presort Digester — Requirements v5
-*Revised 2026-04-07. Based on `requirements_260329_v5_pbc.md`.*
+*Revised 2026-04-16. Based on `requirements_260407_v5_claude.md`.*
 
 ---
 
@@ -79,7 +79,7 @@ Handles the database connection and executes all queries and commits.
 | Column | Type | Notes |
 |---|---|---|
 | `folder_number` | INTEGER PK | Sequential folder index within batch (assigned by scanner) |
-| `batch_folder_id` | Batch_id + F + folder_number e.g. CDB260605F2
+| `batch_folder_id` | TEXT | Batch_id + F + folder_number e.g. CDB260605F2
 | `cdash_folder_name` | TEXT | Slugified Omeka Item Set name, e.g., `East_Cambridge` |
 | `item_set_id` | INTEGER UNIQUE | Omeka Item Set ID |
 | `os_folder_name` | TEXT | Actual current OS folder name |
@@ -138,8 +138,8 @@ Handles the database connection and executes all queries and commits.
 | `doc_item_id` | INTEGER FK → `cdash_doc` | NULL if not yet associated with a document |
 | `item_set_id` | INTEGER FK → `cdash_folder` | |
 | `filename` | TEXT | Current OS filename |
-| `batch_media_id` | TEXT |<batch_folder_id>-<place_slug>_<doc_index:04d>p<page_index:04d>-<doc_type>`
-| `filepath` | TEXT | Path relative to batch root |
+| `batch_media_id` | TEXT |<batch_folder_id>-<place_slug>-<doc_index:04d>p<page_index:04d>-<doc_type>`
+| `filepath` | TEXT | Path relative starting at batch root |
 | `page_num` | INTEGER | Page number within document (1-based) |
 | `capture_date` | TEXT | From EXIF `DateTimeOriginal`; ISO 8601 |
 | `file_size_mb` | REAL | |
@@ -180,7 +180,7 @@ The trailing letter on the batch ID is optional and distinguishes multiple batch
 CDB<YYMMDD>[a-z]?-<batch_name>/
   Media/
     F<folder_index>-<Item_Set_Slug>-OF<OmekaItemSetID>/
-      <place_slug>_<doc_index:04d>p<page_index:04d>-<doc_type>-OP<place_id>.<sfx>
+      <place_slug>-<doc_index:04d>p<page_index:04d>-<doc_type>-OP<place_id>.<sfx>
   Catalog/
     batch_db.sqlite
     batch.csv
@@ -225,7 +225,8 @@ A rudimentary name (e.g., `photo001.tif`) is accepted on input and registered wi
 
 #### `slugify` function
 
-Replaces spaces with underscores; removes all non-alphanumeric characters except `-` and `_`.
+Replaces spaces with underscores; removes all non-alphanumeric characters except `_`. 
+` - ` is replaced by `-`
 
 ---
 
@@ -274,8 +275,8 @@ Place properties extracted from the API response:
 | `neighborhood` | `cdash:neighborhood[*]["@value"]` (joined) |
 | `chc_dist` | `cdash:chcDist[*]["@value"]` (joined) |
 | `item_set_ids` | `o:item_set[*]["o:id"]` (joined) |
-| `lat` | `cdash:lat[0]["@value"]` |
-| `lon` | `cdash:lon[0]["@value"]` |
+| `lat` | `o-module-mapping:lat[0]["@value"]` |
+| `lon` | `o-module-mapping:lon[0]["@value"]` |
 
 The validator degrades gracefully when offline. Callers use the `BatchDB` cache as fallback.
 
@@ -473,8 +474,18 @@ Produced by `Digester.export_csv()` when `batch.ready = True`. Written to `Catal
 | `mnemonic_name` | `cdash_batch.name` |
 | `batch_folder_path` | `cdash_batch.batch_folder_path` |
 | `initialized_date` | `cdash_batch.initialized_date` |
-| `go_nogo` | `"go"` if `ready`, else `"no-go"` |
+| `status` | `"go"` if `ready`, else `"no-go"` |
 | `qa_note` | `cdash_batch.note` |
+
+### `folder.csv`
+| Column | Source |
+|---|---|
+|`ResourceTemplate` | `"CDASH Folder"` |
+|`ResourceClass` | `"bibo:Collection"` |
+|`folder`        | `cdash_folder_name` |
+|`itemSetID`     | `item_set_id` |
+
+
 
 ### `place.csv`
 
@@ -489,6 +500,8 @@ Produced by `Digester.export_csv()` when `batch.ready = True`. Written to `Catal
 | `placeType` | `place_type` |
 | `lat` | `lat` |
 | `lon` | `lon` |
+| `Folder` | `cdash_folder_name` |
+| `ItemSetID` | `folder.item_set_id` |
 | `houseNum` | `house_num` |
 | `streetName` | `street_name` |
 | `streetSort` | `street_sort` |
@@ -525,8 +538,7 @@ Produced by `Digester.export_csv()` when `batch.ready = True`. Written to `Catal
 | `ResourceTemplate` | constant `"CDASH Media"` |
 | `Title` | `filename` |
 | `identifier` | `batch_media_id` |
-| `Relation` | `doc_item_id` |
-| `doc_id` | `batch_doc_id` |
+| `Relation` | `batch_doc_id` |
 | `type` | `doc_type_code` |
 | `Source` | `filepath` (relative, beginning with batch root) |
 | `number` | `page_num` |
