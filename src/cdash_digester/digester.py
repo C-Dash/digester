@@ -697,7 +697,7 @@ class Digester:
                         "Digital Architectural Survey and History."
                     ),
                     "rights":              "Rights status not evaluated.",
-                    "placeitem":           d["place_name"],
+                    "placeitem":           d["place_item_id"],
                     "placeItemID":         d["place_item_id"],
                     "Folder":              d["cdash_folder_name"],
                     "ItemSetID":           d["folder_item_set_id"],

@@ -301,6 +301,7 @@ Checks a single media file against acceptance criteria. Returns `(True/False, pr
 - Corrupt or unreadable file
 - TIFF with non-LZW compression
 - PDF without PDF/A-1b conformance marker
+- EXIF tags reflecting 
 
 `props` dict keys: `file_size_mb`, `pixel_width`, `pixel_height`, `color_mode`, `capture_date`, `qa_note`.
 
@@ -331,13 +332,13 @@ Full batch scan. Rebuilds the database from scratch.
    c. Rename the folder to canonical form `F<index>-<slug>-OF<item_set_id>` if needed.
    d. Insert/update a `cdash_folder` record.
    e. For each media file in the folder (sorted alphabetically):
-      - Screen format via `screen_file()`. On rejection: move to `Rejects/`, insert into `media_rejects`, continue.
       - Parse the filename. If not in ready format: insert with `ready=False`, continue.
       - Validate `place_id` via `CDASHValidator.validate_place()` (or use cached DB record).
       - Track doc grouping by `doc_index`: new index → create `cdash_doc`; same index → increment pages.
       - Rename file to canonical form if place is fully known.
+      - Screen format via `screen_file()`. 
       - Insert `cdash_media` record.
-   f. Set `media_ready` on the folder.
+   f. Set `status` on the folder.
 3. Set `rejected_count` on the batch. Recalculate `batch.ready`.
 
 #### `validate_folder(item_set_id)` — Folder → Scan Selected Folder

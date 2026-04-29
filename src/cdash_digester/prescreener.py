@@ -22,14 +22,18 @@ Rejection criteria
 - PDF without PDF/A-1b XMP marker
 """
 
+import argparse
 import csv
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Tuple
 
 from PIL import Image, UnidentifiedImageError
+from PIL.ExifTags import TAGS
 import fitz  # pymupdf
+import exiftool
 
 from .cdash_objects import BatchDB
 
@@ -52,6 +56,17 @@ _REJECTS_FIELDS = [
 # ---------------------------------------------------------------------------
 # Low-level file screening
 # ---------------------------------------------------------------------------
+
+def _get_exiftool_tags(filepath: Path) -> dict:
+    """Return ExifTool metadata for filepath with numeric tag values (-n).
+    Returns empty dict if ExifTool is unavailable or fails."""
+    try:
+        with exiftool.ExifToolHelper() as et:
+            results = et.get_metadata(str(filepath), params=["-n"])
+        return results[0] if results else {}
+    except Exception:
+        return {}
+
 
 def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
     """Return (ok, message, flavor) for PDF/A-1b conformance via XMP marker.
@@ -154,16 +169,12 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         )
         return False, props
 
-    # EXIF capture date (tag 36867 = DateTimeOriginal, 306 = DateTime)
-    try:
-        exif = img.getexif()           # public API; works for JPEG and TIFF
-        if exif:
-            raw = exif.get(36867) or exif.get(306)
-            if raw:
-                props["capture_date"] = raw[:10].replace(":", "-")
-                props["date_source"]  = "exif"
-    except Exception:
-        pass
+    # EXIF capture date via ExifTool (called once; et_tags reused below)
+    et_tags = _get_exiftool_tags(filepath)
+    raw = et_tags.get("EXIF:DateTimeOriginal") or et_tags.get("EXIF:ModifyDate")
+    if raw:
+        props["capture_date"] = str(raw)[:10].replace(":", "-")
+        props["date_source"]  = "exif"
     if props["capture_date"] is None:
         props["capture_date"] = datetime.fromtimestamp(
             filepath.stat().st_ctime
@@ -195,6 +206,15 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         # Reject 16-bit TIFFs (mode will be 'I;16' or 'F' after load)
         if img.mode in ("I;16", "F"):
             props["qa_note"] = "16-bit TIFFs are not accepted"
+            return False, props
+
+        # Reject iPhone TIFFs that are portrait orientation.
+        # ExifTool reads HostComputer and Orientation reliably across IFDs.
+        # Two portrait signals: non-normal orientation tag, or portrait pixels (h > w).
+        host = et_tags.get("EXIF:HostComputer", "") or ""
+        orientation = et_tags.get("EXIF:Orientation")  # int with -n; 1 = normal
+        if "iphone" in host.lower() and (orientation not in (None, 1) or h > w):
+            props["qa_note"] = "iphone-vert"
             return False, props
 
     props["qa_note"] = "OK"
@@ -290,3 +310,101 @@ class MediaPrescreener:
             writer = csv.DictWriter(f, fieldnames=_REJECTS_FIELDS)
             writer.writeheader()
             writer.writerows(self._reject_rows)
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Prescreen a media file and report its properties, EXIF data, and PIL format attributes."
+    )
+    parser.add_argument("filepath", help="Path to the media file to inspect")
+    args = parser.parse_args()
+
+    filepath = Path(args.filepath)
+    if not filepath.exists():
+        print(f"Error: file not found: {filepath}", file=sys.stderr)
+        sys.exit(1)
+
+    sep = "=" * 60
+    print(f"\n{sep}")
+    print(f"File : {filepath.name}")
+    print(f"Path : {filepath}")
+    print(sep)
+
+    # --- Prescreener result ---
+    status, props = screen_file(filepath)
+    print(f"\n--- Prescreener Result ---")
+    print(f"  {'status':<16}: {'ACCEPTED' if status else 'REJECTED'}")
+    for key, val in props.items():
+        print(f"  {key:<16}: {val}")
+
+    suffix = filepath.suffix.lower()
+
+    # --- PIL attributes (images only) ---
+    if suffix in (".jpg", ".jpeg", ".tif", ".tiff"):
+        try:
+            img = Image.open(filepath)
+            img.load()
+
+            print(f"\n--- PIL Format Attributes ---")
+            print(f"  {'format':<16}: {img.format}")
+            print(f"  {'mode':<16}: {img.mode}")
+            print(f"  {'size':<16}: {img.size[0]} x {img.size[1]}")
+
+            if img.info:
+                print(f"\n  img.info:")
+                for k, v in img.info.items():
+                    print(f"    {str(k):<20}: {v!r}")
+
+            tag_v2 = getattr(img, "tag_v2", None)
+            if tag_v2:
+                print(f"\n  TIFF tag_v2:")
+                for tag_id, val in sorted(tag_v2.items()):
+                    name = TAGS.get(tag_id, f"tag_{tag_id}")
+                    print(f"    [{tag_id:5d}] {name:<30}: {val!r}")
+
+            # --- ExifTool tags ---
+            print(f"\n--- ExifTool Tags ---")
+            try:
+                et_tags = _get_exiftool_tags(filepath)
+                if et_tags:
+                    max_key = max((len(k) for k in et_tags if k != "SourceFile"), default=30)
+                    for key, val in sorted(et_tags.items()):
+                        if key != "SourceFile":
+                            print(f"  {key:<{max_key}}  :  {val!r}")
+                else:
+                    print("  (no data — is ExifTool on PATH?)")
+            except Exception as exc:
+                print(f"  ExifTool error: {exc}")
+
+        except Exception as exc:
+            print(f"\nCannot open image with PIL: {exc}")
+
+    # --- PDF attributes ---
+    elif suffix == ".pdf":
+        try:
+            doc = fitz.open(str(filepath))
+            print(f"\n--- PDF Attributes ---")
+            print(f"  {'page_count':<16}: {doc.page_count}")
+            meta = doc.metadata or {}
+            if meta:
+                print(f"\n  metadata:")
+                for k, v in meta.items():
+                    print(f"    {k:<20}: {v!r}")
+            xmp = doc.get_xml_metadata() or ""
+            if xmp:
+                print(f"\n  XMP (first 800 chars):")
+                for line in xmp[:800].splitlines():
+                    print(f"    {line}")
+            doc.close()
+        except Exception as exc:
+            print(f"\nCannot open PDF: {exc}")
+
+    print()
+
+
+if __name__ == "__main__":
+    main()
