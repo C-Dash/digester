@@ -48,7 +48,7 @@ ACCEPTED_SUFFIXES = {".tif", ".tiff", ".jpg", ".jpeg", ".pdf"}
 
 def slugify(text: str) -> str:
     """Replace spaces with underscores; drop all non-alphanumeric except - and _."""
-    return re.sub(r"[^a-zA-Z0-9_\-]", "", text.replace(" ", "_"))
+    return re.sub(r"[^a-zA-Z0-9_\-]", "", text.replace(" - ", "-").replace(" ", "_"))
 
 
 # ---------------------------------------------------------------------------
