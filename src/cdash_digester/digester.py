@@ -242,7 +242,7 @@ class Digester:
 
         # doc_index → {"doc_item_id", "place_slug", "doc_type", "page_count"}
         doc_tracker: dict = {}
-        doc_seq = 0   # folder_doc_sequence counter
+        doc_seq = 1  # folder_doc_sequence counter
 
         for filepath in media_files:
             self.log(f"  {filepath.name}", "info")
@@ -269,16 +269,23 @@ class Digester:
                     file_size_mb=props.get("file_size_mb"),
                     pixel_width=props.get("pixel_width"),
                     pixel_height=props.get("pixel_height"),
-                    format_note=props.get("color_mode"),
+                    format_note=props.get("format"),
                     ready=False,
                     notes=", ".join(notes_parts),
                 )
                 self.log("    Not-ready name.", "info")
                 continue
 
-            place_id = parsed["place_id"]
+            place_slug = parsed["place_slug"]
             doc_index = parsed["doc_index"]
             doc_type = parsed["doc_type"]
+            place_id = parsed["place_id"]
+
+            if doc_index in doc_tracker and (place_slug == doc_tracker[doc_index]["place_slug"] and place_id == None):
+                # same document no place_id 
+                place_id = doc_tracker[doc_index]["place_id"]
+                doc_type = doc_tracker[doc_index]["doc_type"]
+
 
             # 3. Place validation
             place_name = None
@@ -308,13 +315,14 @@ class Digester:
                         notes_parts.append(f"Place {place_id}: {p_status}")
                         place_name = parsed["place_slug"]
 
+
             if place_id is None:
                 notes_parts.append("No place ID in filename")
-
+                
             media_ready = not notes_parts
 
             # 4. Doc tracking / creation
-            if doc_index not in doc_tracker:
+            if doc_index not in doc_tracker:  # New Document
                 doc_seq += 1
                 batch_doc_id = (
                     f"{batch_folder_id}-{parsed['place_slug']}-{doc_seq:04d}-{doc_type}"
@@ -338,6 +346,7 @@ class Digester:
                     "place_slug":   parsed["place_slug"],
                     "doc_type":     doc_type,
                     "doc_seq":      doc_seq,
+                    "place_id":     place_id,
                     "page_count":   0,
                 }
             else:
@@ -369,7 +378,7 @@ class Digester:
             self.db.increment_doc_pages(doc_item_id, props.get("capture_date"))
 
             # 6. Rename file only when format is ok and place is fully known
-            if accepted and place_id is not None and place_name:
+            if place_id is not None and place_name:
                 new_stem = (
                     f"{slugify(place_name)}_{doc_index:04d}p{page_num:04d}"
                     f"-{doc_type}-OP{place_id}"
@@ -398,7 +407,7 @@ class Digester:
                 file_size_mb=props.get("file_size_mb"),
                 pixel_width=props.get("pixel_width"),
                 pixel_height=props.get("pixel_height"),
-                format_note=props.get("color_mode"),
+                format_note=props.get("format"),
                 ready=media_ready,
                 notes=", ".join(notes_parts),
             )
@@ -761,12 +770,12 @@ if __name__ == "__main__":
 
     # Locate the test batch (two levels up from src/cdash_digester/)
     _project_root = Path(__file__).parent.parent.parent
-    _src = _project_root / "CDB260320-Test_batch"
+    _src = _project_root / "CDB260430-Test_batch"
     if not _src.is_dir():
         print(f"Test batch not found: {_src}")
         sys.exit(1)
 
-    _tmp = Path(tempfile.mkdtemp()) / _src.name
+    _tmp = _src.name + "_tmp"
     shutil.copytree(str(_src), str(_tmp))
     print(f"Test batch copied to: {_tmp}\n")
 

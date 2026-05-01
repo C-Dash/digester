@@ -47,9 +47,18 @@ _TIFF_LZW = 5                   # TIFF compression tag value for LZW
 
 _ACCEPTED_SUFFIXES = {".jpg", ".jpeg", ".tif", ".tiff", ".pdf"}
 
+# PIL modes that need no repair for each image type.
+# Any mode outside this set is added to props["repair_issues"].
+_CLEAN_MODES = {
+    ".jpg":  {"RGB"},
+    ".jpeg": {"RGB"},
+    ".tif":  {"RGB", "L"},
+    ".tiff": {"RGB", "L"},
+}
+
 _REJECTS_FIELDS = [
     "filename", "filepath", "file_size_mb", "pixel_width", "pixel_height",
-    "color_mode", "capture_date", "date_source", "status", "qa_note",
+    "format", "capture_date", "date_source", "status", "qa_note",
 ]
 
 
@@ -97,16 +106,17 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     (status, props)
         status : True (accepted) | False (rejected)
         props  : dict with keys file_size_mb, pixel_width, pixel_height,
-                 color_mode, capture_date, qa_note
+                 format, capture_date, qa_note
     """
     props = {
-        "file_size_mb": None,
-        "pixel_width":  None,
-        "pixel_height": None,
-        "color_mode":   None,
-        "capture_date": None,
-        "date_source":  None,
-        "qa_note":      "",
+        "file_size_mb":  None,
+        "pixel_width":   None,
+        "pixel_height":  None,
+        "format":        None,
+        "capture_date":  None,
+        "date_source":   None,
+        "qa_note":       "",
+        "repair_issues": [],
     }
 
     suffix = filepath.suffix.lower()
@@ -129,8 +139,8 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     # PDF path
     if suffix == ".pdf":
         ok, msg, flavor = _check_pdf_a1b(filepath)
-        props["qa_note"]    = msg
-        props["color_mode"] = flavor
+        props["qa_note"] = msg
+        props["format"]  = flavor
         # Extract creation date from PDF metadata: "D:YYYYMMDDHHmmSS..."
         try:
             doc = fitz.open(str(filepath))
@@ -157,7 +167,9 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         props["qa_note"] = f"Cannot open image: {exc}"
         return False, props
 
-    props["color_mode"] = img.mode
+    props["format"] = img.mode
+    if img.mode not in _CLEAN_MODES.get(suffix, set()):
+        props["repair_issues"].append(img.mode)
     w, h = img.size
     props["pixel_width"]  = w
     props["pixel_height"] = h
@@ -213,8 +225,9 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         # Two portrait signals: non-normal orientation tag, or portrait pixels (h > w).
         host = et_tags.get("EXIF:HostComputer", "") or ""
         orientation = et_tags.get("EXIF:Orientation")  # int with -n; 1 = normal
-        if "iphone" in host.lower() and (orientation not in (None, 1) or h > w):
+        if "iphone" in host.lower() and (orientation not in (None, 1)):
             props["qa_note"] = "iphone-vert"
+            props["repair_issues"].append("iphone_vert")
             return False, props
 
     props["qa_note"] = "OK"
@@ -257,7 +270,7 @@ class MediaPrescreener:
                 props["file_size_mb"],
                 props["pixel_width"],
                 props["pixel_height"],
-                props["color_mode"],
+                props["format"],
                 props["capture_date"],
                 props["date_source"],
             )
@@ -274,7 +287,7 @@ class MediaPrescreener:
                     file_size_mb=props["file_size_mb"],
                     pixel_width=props["pixel_width"],
                     pixel_height=props["pixel_height"],
-                    color_mode=props["color_mode"],
+                    format_note=props["format"],
                     capture_date=props["capture_date"],
                     date_source=props["date_source"],
                     qa_note=props["qa_note"],
@@ -285,7 +298,7 @@ class MediaPrescreener:
                     "file_size_mb": props["file_size_mb"],
                     "pixel_width":  props["pixel_width"],
                     "pixel_height": props["pixel_height"],
-                    "color_mode":   props["color_mode"],
+                    "format":       props["format"],
                     "capture_date": props["capture_date"],
                     "date_source":  props["date_source"],
                     "status":       False,

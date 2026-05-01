@@ -516,7 +516,7 @@ class BatchDB:
                                        file_size_mb: float,
                                        pixel_width: int,
                                        pixel_height: int,
-                                       color_mode: str,
+                                       format_note: str,
                                        capture_date: str,
                                        date_source: str = None):
         self._con.execute(
@@ -525,7 +525,7 @@ class BatchDB:
                    format_note=?, capture_date=?, date_source=?
                WHERE media_id=?""",
             (file_size_mb, pixel_width, pixel_height,
-             color_mode, capture_date, date_source, media_id),
+             format_note, capture_date, date_source, media_id),
         )
         self._con.commit()
 
