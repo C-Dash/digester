@@ -14,8 +14,8 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QAbstractItemView, QTableView, QWidget
 
-_COLUMNS  = ["filename", "doc_type_code", "page_num", "ready", "notes"]
-_HEADERS  = ["Filename",  "Type",          "Page",    "Status", "Notes"]
+_COLUMNS  = ["filename", "doc_type_code", "page_num", "repair_issues", "ready", "notes"]
+_HEADERS  = ["Filename",  "Type",          "Page",    "Repair Issues", "Status", "Notes"]
 
 _READY_DISPLAY = {True: "Ready", False: "Not Ready", None: "—"}
 

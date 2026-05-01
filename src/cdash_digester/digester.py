@@ -18,6 +18,7 @@ status summary.  The GUI is not launched.
 """
 
 import csv
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,7 @@ from .cdash_objects import (
     parse_batch_name, parse_folder_name, parse_media_name, slugify,
 )
 from .prescreener import screen_file
+from .repair_media import parse_repair_issues, repair_file
 from .validator import CDASHValidator
 
 
@@ -242,14 +244,16 @@ class Digester:
 
         # doc_index → {"doc_item_id", "place_slug", "doc_type", "page_count"}
         doc_tracker: dict = {}
-        doc_seq = 1  # folder_doc_sequence counter
+        doc_seq = 0  # folder_doc_sequence counter
 
         for filepath in media_files:
             self.log(f"  {filepath.name}", "info")
             notes_parts: list = []
+            repair_issues = ""
 
             # 1. Format screening
             accepted, props = screen_file(filepath)
+            repair_issues = ", ".join(props.get("repair_issues", []))
             if not accepted:
                 notes_parts.append(props.get("qa_note", "Format rejected"))
                 self.log(f"    Format issue: {props.get('qa_note')}", "warning")
@@ -270,6 +274,7 @@ class Digester:
                     pixel_width=props.get("pixel_width"),
                     pixel_height=props.get("pixel_height"),
                     format_note=props.get("format"),
+                    repair_issues=repair_issues,
                     ready=False,
                     notes=", ".join(notes_parts),
                 )
@@ -362,6 +367,7 @@ class Digester:
                         item_set_id=item_set_id,
                         filename=filepath.name,
                         filepath=rel_path,
+                        repair_issues=repair_issues,
                         ready=False,
                         notes=msg,
                     )
@@ -408,6 +414,7 @@ class Digester:
                 pixel_width=props.get("pixel_width"),
                 pixel_height=props.get("pixel_height"),
                 format_note=props.get("format"),
+                repair_issues=repair_issues,
                 ready=media_ready,
                 notes=", ".join(notes_parts),
             )
@@ -554,6 +561,58 @@ class Digester:
             )
         except OSError as exc:
             self.log(f"  Rename failed for {row['filename']}: {exc}", "error")
+
+    def repair_media_files(self, media_ids: List[int]):
+        """Repair selected media files that have recorded repair issues.
+
+        Each repaired file is copied back over its original, then every
+        affected folder is rescanned so the DB reflects the corrected files.
+        """
+        if not self.db:
+            self.log("No open batch.", "error")
+            return
+
+        repaired = 0
+        failed = 0
+        skipped = 0
+        affected_folders: set = set()
+
+        for media_id in media_ids:
+            row = self.db.get_media(media_id)
+            if not row:
+                skipped += 1
+                self.log(f"Media ID {media_id} not found.", "warning")
+                continue
+
+            issues = parse_repair_issues(row.get("repair_issues"))
+            if not issues:
+                skipped += 1
+                self.log(f"Skipping {row['filename']}: no repair issues.", "info")
+                continue
+
+            filepath = self.batch_path / row["filepath"]
+            if not filepath.exists():
+                failed += 1
+                self.log(f"Cannot repair {row['filename']}: file not found.", "error")
+                continue
+
+            self.log(f"Repairing {row['filename']} ({', '.join(issues)})…", "info")
+            success, message = repair_file(filepath, issues)
+            if success:
+                repaired += 1
+                affected_folders.add(row["item_set_id"])
+                self.log(f"  {message}", "success")
+            else:
+                failed += 1
+                self.log(f"  {message}", "error")
+
+        self.log(
+            f"Repair complete: {repaired} repaired, {failed} failed, {skipped} skipped.",
+            "info",
+        )
+
+        for item_set_id in affected_folders:
+            self.validate_folder(item_set_id)
 
     # ----------------------------------------------------------------- status
 

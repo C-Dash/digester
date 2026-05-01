@@ -227,6 +227,7 @@ class BatchDB:
                 pixel_width  INTEGER,
                 pixel_height INTEGER,
                 format_note  TEXT,
+                repair_issues TEXT,
                 ready        INTEGER DEFAULT 0,
                 notes        TEXT
             )""",
@@ -482,17 +483,17 @@ class BatchDB:
                      page_num: int = 0,
                      capture_date: str = None, file_size_mb: float = None,
                      pixel_width: int = None, pixel_height: int = None,
-                     format_note: str = None,
+                            format_note: str = None, repair_issues: str = "",
                      ready: bool = False, notes: str = "") -> int:
         cur = self._con.execute(
             """INSERT INTO cdash_media
                (doc_item_id, item_set_id, filename, batch_media_id, filepath,
                 page_num, capture_date, file_size_mb, pixel_width, pixel_height,
-                format_note, ready, notes)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     format_note, repair_issues, ready, notes)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (doc_item_id, item_set_id, filename, batch_media_id, filepath,
-             page_num, capture_date, file_size_mb, pixel_width, pixel_height,
-             format_note, int(ready), notes),
+                 page_num, capture_date, file_size_mb, pixel_width, pixel_height,
+                 format_note, repair_issues, int(ready), notes),
         )
         self._con.commit()
         return cur.lastrowid
@@ -518,14 +519,16 @@ class BatchDB:
                                        pixel_height: int,
                                        format_note: str,
                                        capture_date: str,
-                                       date_source: str = None):
+                                       date_source: str = None,
+                                       repair_issues: str = ""):
         self._con.execute(
             """UPDATE cdash_media
                SET file_size_mb=?, pixel_width=?, pixel_height=?,
-                   format_note=?, capture_date=?, date_source=?
+                   format_note=?, capture_date=?, date_source=?,
+                   repair_issues=?
                WHERE media_id=?""",
             (file_size_mb, pixel_width, pixel_height,
-             format_note, capture_date, date_source, media_id),
+             format_note, capture_date, date_source, repair_issues, media_id),
         )
         self._con.commit()
 

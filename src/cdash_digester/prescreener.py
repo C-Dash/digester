@@ -169,7 +169,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
 
     props["format"] = img.mode
     if img.mode not in _CLEAN_MODES.get(suffix, set()):
-        props["repair_issues"].append(img.mode)
+        props["repair_issues"].append(img.mode.lower())
     w, h = img.size
     props["pixel_width"]  = w
     props["pixel_height"] = h
@@ -200,7 +200,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             return False, props
 
     elif suffix in (".tif", ".tiff"):
-        if img.mode not in ("RGB", "L", "RGBA"): # ("RGB", "L", "RGBA")
+        if img.mode not in ("RGB", "L"): # ("RGB", "L", "RGBA")
             props["qa_note"] = (
                 f"TIFF must be 24-bit RGB or 8-bit grayscale; got {img.mode}"
             )
@@ -225,7 +225,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         # Two portrait signals: non-normal orientation tag, or portrait pixels (h > w).
         host = et_tags.get("EXIF:HostComputer", "") or ""
         orientation = et_tags.get("EXIF:Orientation")  # int with -n; 1 = normal
-        if "iphone" in host.lower() and (orientation not in (None, 1)):
+        if "iphone" in host.lower() and (orientation not in (None, 1) or h > w):
             props["qa_note"] = "iphone-vert"
             props["repair_issues"].append("iphone_vert")
             return False, props
@@ -273,6 +273,7 @@ class MediaPrescreener:
                 props["format"],
                 props["capture_date"],
                 props["date_source"],
+                ", ".join(props.get("repair_issues", [])),
             )
             self.db.set_media_status(row["media_id"], status, props["qa_note"])
 

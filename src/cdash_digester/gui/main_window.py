@@ -64,6 +64,8 @@ class _Worker(QThread):
                 self.log_message.emit(
                     self.digester.get_status_summary(), "info"
                 )
+            elif op == "repair_media":
+                self.digester.repair_media_files(self.kwargs["media_ids"])
         except Exception as exc:
             self.error.emit(str(exc))
         finally:
@@ -214,6 +216,11 @@ class MainWindow(QMainWindow):
         self._act_assign.setEnabled(False)
         media_menu.addAction(self._act_assign)
 
+        self._act_repair = QAction("Repair Selected Media", self)
+        self._act_repair.triggered.connect(self._repair_selected_media)
+        self._act_repair.setEnabled(False)
+        media_menu.addAction(self._act_repair)
+
     # ---------------------------------------------------------------- slots
 
     @Slot()
@@ -252,7 +259,7 @@ class MainWindow(QMainWindow):
             self.console.set_log_path(log_path)
         self._reload_folders()
         for act in (self._act_init, self._act_csv, self._act_status,
-                    self._act_val_folder, self._act_assign):
+                    self._act_val_folder, self._act_assign, self._act_repair):
             act.setEnabled(True)
 
     @Slot()
@@ -331,6 +338,49 @@ class MainWindow(QMainWindow):
             self.console.append_message(
                 "Metadata assignment failed.", "error"
             )
+
+    @Slot()
+    def _repair_selected_media(self):
+        if not self.digester or not self.digester.db:
+            return
+
+        media_ids = self.media_table.selected_media_ids()
+        if not media_ids:
+            QMessageBox.information(
+                self,
+                "No Selection",
+                "Select one or more media files first.",
+            )
+            return
+
+        repairable_ids = []
+        skipped = 0
+        for media_id in media_ids:
+            row = self.digester.db.get_media(media_id)
+            if row and (row.get("repair_issues") or "").strip():
+                repairable_ids.append(media_id)
+            else:
+                skipped += 1
+
+        if not repairable_ids:
+            QMessageBox.information(
+                self,
+                "No Repair Issues",
+                "None of the selected media files have repair issues.",
+            )
+            return
+
+        self.console.append_message(
+            f"Repairing {len(repairable_ids)} selected media file(s)...",
+            "info",
+        )
+        if skipped:
+            self.console.append_message(
+                f"Skipping {skipped} selected file(s) with no repair issues.",
+                "info",
+            )
+        self._run("repair_media", on_finish=self._reload_after_folder_scan,
+                  media_ids=repairable_ids)
 
     # --------------------------------------------------------------- helpers
 
