@@ -200,12 +200,12 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             return False, props
 
     elif suffix in (".tif", ".tiff"):
-        if img.mode not in ("RGB", "L"): # ("RGB", "L", "RGBA")
-            props["qa_note"] = (
-                f"TIFF must be 24-bit RGB or 8-bit grayscale; got {img.mode}"
-            )
+        if getattr(img, 'n_frames', 1) > 1:
+            props["repair_issues"].insert(0, "multiframe_tiff")
+            props["qa_note"] = "multiframe-tiff"
             return False, props
 
+        # Non-repairable structural checks — return immediately.
         tag_v2 = getattr(img, "tag_v2", {})
         compression = tag_v2.get(259)   # TIFF tag 259 = Compression
         if compression != _TIFF_LZW:
@@ -215,19 +215,27 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             )
             return False, props
 
-        # Reject 16-bit TIFFs (mode will be 'I;16' or 'F' after load)
         if img.mode in ("I;16", "F"):
             props["qa_note"] = "16-bit TIFFs are not accepted"
             return False, props
 
-        # Reject iPhone TIFFs that are portrait orientation.
-        # ExifTool reads HostComputer and Orientation reliably across IFDs.
-        # Two portrait signals: non-normal orientation tag, or portrait pixels (h > w).
+        # Repairable checks — accumulate all issues before returning.
+        qa_parts = []
+
+        if img.mode not in ("RGB", "L"):
+            qa_parts.append(
+                f"TIFF must be 24-bit RGB or 8-bit grayscale; got {img.mode}"
+            )
+
+        # iPhone portrait: non-normal EXIF Orientation or portrait pixel dimensions.
         host = et_tags.get("EXIF:HostComputer", "") or ""
         orientation = et_tags.get("EXIF:Orientation")  # int with -n; 1 = normal
         if "iphone" in host.lower() and (orientation not in (None, 1) or h > w):
-            props["qa_note"] = "iphone-vert"
             props["repair_issues"].append("iphone_vert")
+            qa_parts.append("iphone-vert")
+
+        if props["repair_issues"]:
+            props["qa_note"] = "; ".join(qa_parts) if qa_parts else ", ".join(props["repair_issues"])
             return False, props
 
     props["qa_note"] = "OK"
@@ -328,6 +336,8 @@ class MediaPrescreener:
 
 # ---------------------------------------------------------------------------
 # CLI entry point
+# To run:
+# python -m cdash_digester.prescreener "CDB260430-Test_batch\media\F6-Mass_Ave_Quincy_Central_Sqs_Views_Both_Sides-OF43111\Massachusetts_Ave-Mass_Ave_Quincy_Square_to_Central_Square_0027p0001-VE-OP43296.tif"
 # ---------------------------------------------------------------------------
 
 def main():

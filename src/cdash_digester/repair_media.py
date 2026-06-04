@@ -14,6 +14,7 @@ Issues and Remedies
 import argparse
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
@@ -61,16 +62,23 @@ def _get_exif_orientation(filepath: Path):
         return None
 
 
-def repair_file(filepath: Path, issues: List[str]) -> Tuple[bool, str]:
+def repair_file(
+    filepath: Path,
+    issues: List[str],
+    catalog_path: Path = None,
+) -> Tuple[bool, str]:
     """Apply repairs to filepath for the given issue codes.
 
     Creates <filepath.parent>/Rejects/orig/ and .../repaired/ as needed.
     Copies the original to orig/ then writes the repaired image to repaired/.
+    If catalog_path is provided, appends an entry to catalog_path/rejects.txt.
     Returns (success, message).
     """
     issues = parse_repair_issues(issues)
     if not issues:
         return True, "No issues to repair"
+    if "multiframe_tiff" in issues:
+        return False, "Cannot repair multi-frame TIFF — manual intervention required"
 
     orig_dir = filepath.parent / "Rejects" / "orig"
     orig_dir.mkdir(parents=True, exist_ok=True)
@@ -80,9 +88,21 @@ def repair_file(filepath: Path, issues: List[str]) -> Tuple[bool, str]:
     except Exception as exc:
         return False, f"Cannot back up original: {exc}"
 
+    rejects_warning = ""
+    if catalog_path is not None:
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            entry = f"{timestamp} | {filepath} | {', '.join(issues)}\n"
+            with open(catalog_path / "rejects.txt", "a", encoding="utf-8") as f:
+                f.write(entry)
+        except Exception as exc:
+            rejects_warning = f" [rejects.txt write failed: {exc}]"
+
     try:
-        img = Image.open(filepath)
-        img.load()
+        raw_img = Image.open(filepath)
+        raw_img.load()
+        img = raw_img.copy()
+        raw_img.close()
     except Exception as exc:
         return False, f"Cannot open image: {exc}"
 
@@ -99,6 +119,7 @@ def repair_file(filepath: Path, issues: List[str]) -> Tuple[bool, str]:
     # 2. iphone_vert -> rotate to landscape orientation
     if "iphone_vert" in issues:
         orientation = _get_exif_orientation(filepath)
+        print("orientation is: ", orientation)
         angle = _ORIENTATION_ROTATION.get(orientation, _DEFAULT_VERT_ROTATION)
         img = img.rotate(angle, expand=True)
         applied.append(f"rotated {angle} degrees CCW")
@@ -112,7 +133,7 @@ def repair_file(filepath: Path, issues: List[str]) -> Tuple[bool, str]:
     except Exception as exc:
         return False, f"Cannot save repaired image: {exc}"
 
-    return True, "Repaired: " + ", ".join(applied)
+    return True, "Repaired: " + ", ".join(applied) + rejects_warning
 
 
 def main():

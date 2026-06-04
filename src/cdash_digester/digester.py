@@ -597,7 +597,7 @@ class Digester:
                 continue
 
             self.log(f"Repairing {row['filename']} ({', '.join(issues)})…", "info")
-            success, message = repair_file(filepath, issues)
+            success, message = repair_file(filepath, issues, catalog_path=self.catalog_path)
             if success:
                 repaired += 1
                 affected_folders.add(row["item_set_id"])
