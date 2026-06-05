@@ -141,6 +141,9 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         ok, msg, flavor = _check_pdf_a1b(filepath)
         props["qa_note"] = msg
         props["format"]  = flavor
+        if ok and flavor != "PDF/A-1b":
+            props["repair_issues"].append("not_pdfa")
+            ok = False
         # Extract creation date from PDF metadata: "D:YYYYMMDDHHmmSS..."
         try:
             doc = fitz.open(str(filepath))

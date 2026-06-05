@@ -47,11 +47,11 @@ class Digester:
 
     @property
     def catalog_path(self) -> Path:
-        return self.batch_path / "Catalog"
+        return self.batch_path / "catalog"
 
     @property
     def media_path(self) -> Path:
-        return self.batch_path / "Media"
+        return self.batch_path / "media"
 
     @property
     def db_path(self) -> Path:
@@ -75,13 +75,13 @@ class Digester:
             return
 
         if not self.media_path.is_dir():
-            self.log("No 'Media' sub-folder found — cannot open batch.", "error")
+            self.log("No 'media' sub-folder found — cannot open batch.", "error")
             return
 
         # Create Catalog directory; stamp the existing log if one is present
         if not self.catalog_path.exists():
             self.catalog_path.mkdir()
-            self.log("Created Catalog folder.", "info")
+            self.log("Created catalog folder.", "info")
         else:
             log_file = self.catalog_path / "batch.log"
             if log_file.exists():
@@ -641,7 +641,7 @@ class Digester:
     # ------------------------------------------------------------------ CSV
 
     def export_csv(self):
-        """Export batch.csv, place.csv, document.csv, media.csv to Catalog/."""
+        """Export batch.csv, place.csv, document.csv, media.csv to catalog/."""
         if not self.db:
             self.log("No open batch.", "error")
             return
@@ -654,7 +654,7 @@ class Digester:
         self._write_place_csv()
         self._write_document_csv()
         self._write_media_csv()
-        self.log("CSV files written to Catalog/.", "info")
+        self.log("CSV files written to catalog/.", "info")
 
     def _write_batch_csv(self, batch: dict):
         out = self.catalog_path / "batch.csv"

@@ -77,10 +77,8 @@ def repair_file(
     issues = parse_repair_issues(issues)
     if not issues:
         return True, "No issues to repair"
-    if "multiframe_tiff" in issues:
-        return False, "Cannot repair multi-frame TIFF — manual intervention required"
 
-    orig_dir = filepath.parent / "Rejects" / "orig"
+    orig_dir = filepath.parent / "rejects" 
     orig_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -92,11 +90,17 @@ def repair_file(
     if catalog_path is not None:
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            entry = f"{timestamp} | {filepath} | {', '.join(issues)}\n"
+            rel_path = filepath.relative_to(catalog_path.parent)
+            entry = f"{timestamp} | {rel_path} | {', '.join(issues)}\n"
             with open(catalog_path / "rejects.txt", "a", encoding="utf-8") as f:
                 f.write(entry)
         except Exception as exc:
             rejects_warning = f" [rejects.txt write failed: {exc}]"
+
+    if "multiframe_tiff" in issues:
+        return False, f"Cannot repair multi-frame TIFF — manual intervention required{rejects_warning}"
+    if "not_pdfa" in issues:
+        return False, f"Cannot repair non-PDF/A — manual conversion required{rejects_warning}"
 
     try:
         raw_img = Image.open(filepath)
