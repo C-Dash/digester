@@ -54,6 +54,14 @@ class FolderPane(QTreeWidget):
                 item.setForeground(0, QBrush(color))
                 break
 
+    def select_folder(self, item_set_id: int):
+        """Restore the visual selection to the row matching item_set_id."""
+        for i in range(self.topLevelItemCount()):
+            item = self.topLevelItem(i)
+            if self._id_map.get(id(item)) == item_set_id:
+                self.setCurrentItem(item)
+                return
+
     def _on_clicked(self, item: QTreeWidgetItem, _column: int):
         item_set_id = self._id_map.get(id(item))
         if item_set_id is not None:

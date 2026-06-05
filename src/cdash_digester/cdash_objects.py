@@ -472,11 +472,12 @@ class BatchDB:
             (item_set_id,),
         ).fetchall()
 
-    def increment_doc_pages(self, doc_item_id: int, capture_date: str = None):
-        """Increment num_pages; keep date_accepted as the earliest capture date."""
+    def increment_doc_pages(self, doc_item_id: int,
+                            capture_date: str = None, count: int = 1):
+        """Increment num_pages by count; keep date_accepted as the earliest capture date."""
         self._con.execute(
-            "UPDATE cdash_doc SET num_pages = num_pages + 1 WHERE doc_item_id=?",
-            (doc_item_id,),
+            "UPDATE cdash_doc SET num_pages = num_pages + ? WHERE doc_item_id=?",
+            (count, doc_item_id),
         )
         if capture_date:
             existing = self._con.execute(

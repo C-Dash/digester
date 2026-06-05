@@ -393,6 +393,8 @@ class MainWindow(QMainWindow):
                 f"Loading {len(folders)} folder(s) into pane.", "info"
             )
             self.folder_pane.load_folders(folders)
+            if self._current_item_set_id is not None:
+                self.folder_pane.select_folder(self._current_item_set_id)
 
     def _reload_after_folder_scan(self):
         """Refresh folder pane then re-populate media/thumbnail for selected folder."""

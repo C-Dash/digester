@@ -117,6 +117,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         "date_source":   None,
         "qa_note":       "",
         "repair_issues": [],
+        "pdf_pages":     None,
     }
 
     suffix = filepath.suffix.lower()
@@ -144,10 +145,11 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         if ok and flavor != "PDF/A-1b":
             props["repair_issues"].append("not_pdfa")
             ok = False
-        # Extract creation date from PDF metadata: "D:YYYYMMDDHHmmSS..."
+        # Extract creation date and page count from PDF metadata.
         try:
             doc = fitz.open(str(filepath))
             raw = (doc.metadata or {}).get("creationDate", "") or ""
+            props["pdf_pages"] = doc.page_count
             doc.close()
             if raw.startswith("D:") and len(raw) >= 10:
                 digits = raw[2:10]   # YYYYMMDD

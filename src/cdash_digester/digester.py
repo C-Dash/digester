@@ -381,7 +381,11 @@ class Digester:
                 f"{batch_folder_id}-{entry['place_slug']}"
                 f"_{entry['doc_seq']:04d}p{page_num:04d}-{entry['doc_type']}"
             )
-            self.db.increment_doc_pages(doc_item_id, props.get("capture_date"))
+            self.db.increment_doc_pages(
+                doc_item_id,
+                props.get("capture_date"),
+                count=props.get("pdf_pages") or 1,
+            )
 
             # 6. Rename file only when format is ok and place is fully known
             if place_id is not None and place_name:
@@ -838,7 +842,7 @@ class Digester:
     def _write_media_csv(self):
         out = self.catalog_path / "media.csv"
         rows = self.db._con.execute(
-            """SELECT m.*, d.doc_type_code, d.batch_doc_id
+            """SELECT m.*, d.doc_type_code, d.batch_doc_id, d.num_pages AS doc_pages
                FROM cdash_media m
                LEFT JOIN cdash_doc d ON m.doc_item_id = d.doc_item_id
                ORDER BY m.item_set_id, m.filename"""
@@ -847,7 +851,7 @@ class Digester:
             w = csv.DictWriter(f, fieldnames=[
                 "ResourceTemplate", "Title", "identifier",
                 "Relation", "type", "Source", "number", "dateAccepted",
-                "format_note",
+                "format_note", "doc_pages",
             ])
             w.writeheader()
             for m in rows:
@@ -861,6 +865,7 @@ class Digester:
                     "number":           m["page_num"],
                     "dateAccepted":     m["capture_date"],
                     "format_note":      m["format_note"] or "",
+                    "doc_pages":        m["doc_pages"] or "",
                 })
 
     def reopen_db(self):
