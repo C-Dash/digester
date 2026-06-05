@@ -168,7 +168,12 @@ class BatchDB:
                 initialized_date  TEXT,
                 rejected_count    INTEGER DEFAULT 0,
                 ready             INTEGER DEFAULT 0,
-                note              TEXT
+                note              TEXT,
+                folders_count     INTEGER DEFAULT 0,
+                places_count      INTEGER DEFAULT 0,
+                documents_count   INTEGER DEFAULT 0,
+                media_count       INTEGER DEFAULT 0,
+                repaired_count    INTEGER DEFAULT 0
             )""",
             # ------ folder
             """CREATE TABLE IF NOT EXISTS cdash_folder (
@@ -235,6 +240,23 @@ class BatchDB:
         for stmt in stmts:
             self._con.execute(stmt)
         self._con.commit()
+        self._migrate()
+
+    def _migrate(self):
+        """Add new columns to existing databases that predate schema additions."""
+        new_cols = [
+            ("cdash_batch", "folders_count",   "INTEGER DEFAULT 0"),
+            ("cdash_batch", "places_count",     "INTEGER DEFAULT 0"),
+            ("cdash_batch", "documents_count",  "INTEGER DEFAULT 0"),
+            ("cdash_batch", "media_count",      "INTEGER DEFAULT 0"),
+            ("cdash_batch", "repaired_count",   "INTEGER DEFAULT 0"),
+        ]
+        for table, col, defn in new_cols:
+            try:
+                self._con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {defn}")
+                self._con.commit()
+            except Exception:
+                pass  # column already exists
 
     # ------------------------------------------------------------------ batch
 
@@ -274,6 +296,25 @@ class BatchDB:
     def set_rejected_count(self, count: int):
         self._con.execute(
             "UPDATE cdash_batch SET rejected_count=?", (count,)
+        )
+        self._con.commit()
+
+    def count_batch_stats(self) -> dict:
+        """Live COUNT(*) for the four DB-derived batch counts."""
+        q = self._con.execute
+        return {
+            "folders":   q("SELECT COUNT(*) AS n FROM cdash_folder").fetchone()["n"],
+            "places":    q("SELECT COUNT(*) AS n FROM cdash_place").fetchone()["n"],
+            "documents": q("SELECT COUNT(*) AS n FROM cdash_doc").fetchone()["n"],
+            "media":     q("SELECT COUNT(*) AS n FROM cdash_media").fetchone()["n"],
+        }
+
+    def update_batch_counts(self, folders: int, places: int, documents: int,
+                            media: int, rejects: int, repaired: int):
+        self._con.execute(
+            "UPDATE cdash_batch SET folders_count=?, places_count=?, "
+            "documents_count=?, media_count=?, rejected_count=?, repaired_count=?",
+            (folders, places, documents, media, rejects, repaired),
         )
         self._con.commit()
 

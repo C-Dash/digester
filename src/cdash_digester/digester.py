@@ -142,13 +142,12 @@ class Digester:
             self._scan_folder(folder_dir, folder_index=idx,
                               batch_id=parsed["batch_id"])
 
-        not_ready = self.db.count_not_ready_media()
-        self.db.set_rejected_count(not_ready)
         self.db.recalculate_batch_ready()
+        counts = self._collect_and_store_counts()
         batch = self.db.get_batch()
         self.log(
-            f"Scan complete — ready: {batch['ready']}, "
-            f"not-ready files: {not_ready}.",
+            f"Scan complete — ready: {batch['ready']}  "
+            + self._counts_summary(counts),
             "info",
         )
 
@@ -286,6 +285,7 @@ class Digester:
             doc_type = parsed["doc_type"]
             place_id = parsed["place_id"]
 
+            
             if doc_index in doc_tracker and (place_slug == doc_tracker[doc_index]["place_slug"] and place_id == None):
                 # same document no place_id 
                 place_id = doc_tracker[doc_index]["place_id"]
@@ -610,9 +610,54 @@ class Digester:
             f"Repair complete: {repaired} repaired, {failed} failed, {skipped} skipped.",
             "info",
         )
+        counts = self._collect_and_store_counts()
+        self.log(self._counts_summary(counts), "info")
 
         for item_set_id in affected_folders:
             self.validate_folder(item_set_id)
+
+    # --------------------------------------------------------------- counts
+
+    def _read_rejects_csv_counts(self) -> tuple:
+        """Return (total_rows, repaired_rows) from Catalog/rejects.csv."""
+        csv_path = self.catalog_path / "rejects.csv"
+        try:
+            with open(csv_path, newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+            total    = len(rows)
+            repaired = sum(
+                1 for r in rows
+                if r.get("Repair_Action", "").startswith("Repaired:")
+            )
+            return total, repaired
+        except FileNotFoundError:
+            return 0, 0
+
+    def _collect_and_store_counts(self) -> dict:
+        """Compute all six counts, persist to DB, and return as a dict."""
+        stats = self.db.count_batch_stats()
+        rejects, repaired = self._read_rejects_csv_counts()
+        stats["rejects"]  = rejects
+        stats["repaired"] = repaired
+        self.db.update_batch_counts(
+            folders=stats["folders"], places=stats["places"],
+            documents=stats["documents"], media=stats["media"],
+            rejects=rejects, repaired=repaired,
+        )
+        return stats
+
+    @staticmethod
+    def _counts_summary(counts: dict) -> str:
+        lines = [
+            "\nBatch Summary",
+            f"  Folders:   {counts['folders']}",
+            f"  Places:    {counts['places']}",
+            f"  Documents: {counts['documents']}",
+            f"  Media:     {counts['media']}",
+            f"  Rejects:   {counts['rejects']}",
+            f"  Repaired:  {counts['repaired']}",
+        ]
+        return "\n".join(lines)
 
     # ----------------------------------------------------------------- status
 
@@ -649,12 +694,17 @@ class Digester:
         if not batch or not batch["ready"]:
             self.log("Batch is not Ready — CSV export skipped.", "warning")
             return
+        counts = self._collect_and_store_counts()
+        batch = self.db.get_batch()
         self._write_batch_csv(batch)
         self._write_folder_csv()
         self._write_place_csv()
         self._write_document_csv()
         self._write_media_csv()
-        self.log("CSV files written to catalog/.", "info")
+        self.log(
+            "CSV files written to catalog/.  " + self._counts_summary(counts),
+            "info",
+        )
 
     def _write_batch_csv(self, batch: dict):
         out = self.catalog_path / "batch.csv"
@@ -662,6 +712,7 @@ class Digester:
             w = csv.DictWriter(f, fieldnames=[
                 "id", "batch_id", "mnemonic_name", "batch_folder_path",
                 "initialized_date", "status", "qa_note",
+                "folders", "places", "documents", "media", "rejects", "repaired",
             ])
             w.writeheader()
             w.writerow({
@@ -672,6 +723,12 @@ class Digester:
                 "initialized_date":  batch["initialized_date"],
                 "status":            "go" if batch["ready"] else "no-go",
                 "qa_note":           batch.get("note", ""),
+                "folders":           batch.get("folders_count", 0),
+                "places":            batch.get("places_count", 0),
+                "documents":         batch.get("documents_count", 0),
+                "media":             batch.get("media_count", 0),
+                "rejects":           batch.get("rejected_count", 0),
+                "repaired":          batch.get("repaired_count", 0),
             })
 
     def _write_folder_csv(self):

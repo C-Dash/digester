@@ -47,8 +47,9 @@ class ConsoleWindow(QDockWidget):
         """Append a colour-coded, timestamped line to the console."""
         ts = datetime.now().strftime("%H:%M:%S")
         color = _LEVEL_COLOR.get(level, _LEVEL_COLOR["info"])
-        # Escape any HTML in the message text
+        # Escape any HTML in the message text, then restore newlines as <br>
         safe = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        safe = safe.replace("\n", "<br>")
         self._text.append(
             f'<span style="color:{color}">[{ts}] {safe}</span>'
         )

@@ -12,9 +12,9 @@ Issues and Remedies
 """
 
 import argparse
+import csv
 import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
@@ -52,6 +52,30 @@ def parse_repair_issues(issues: str | Iterable[str] | None) -> List[str]:
     return parsed
 
 
+def _append_rejects_csv(
+    catalog_path: Path, filepath: Path, issues: List[str], action: str
+) -> str:
+    """Append one row to Catalog/rejects.csv. Returns a warning string on failure."""
+    if catalog_path is None:
+        return ""
+    try:
+        csv_path = catalog_path / "rejects.csv"
+        write_header = not csv_path.exists()
+        with open(csv_path, "a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if write_header:
+                w.writerow(["MediaFolder", "Filename", "Repair_Issues", "Repair_Action"])
+            w.writerow([
+                filepath.parent.name,
+                filepath.name,
+                "|".join(issues),
+                action,
+            ])
+        return ""
+    except Exception as exc:
+        return f" [rejects.csv write failed: {exc}]"
+
+
 def _get_exif_orientation(filepath: Path):
     """Return numeric EXIF Orientation via ExifTool, or None on failure."""
     try:
@@ -86,21 +110,23 @@ def repair_file(
     except Exception as exc:
         return False, f"Cannot back up original: {exc}"
 
-    rejects_warning = ""
-    if catalog_path is not None:
-        try:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            rel_path = filepath.relative_to(catalog_path.parent)
-            entry = f"{timestamp} | {rel_path} | {', '.join(issues)}\n"
-            with open(catalog_path / "rejects.txt", "a", encoding="utf-8") as f:
-                f.write(entry)
-        except Exception as exc:
-            rejects_warning = f" [rejects.txt write failed: {exc}]"
-
     if "multiframe_tiff" in issues:
-        return False, f"Cannot repair multi-frame TIFF — manual intervention required{rejects_warning}"
+        msg = "Cannot repair multi-frame TIFF — manual intervention required"
+        warn = _append_rejects_csv(catalog_path, filepath, issues, msg)
+        try:
+            filepath.unlink()
+        except Exception as exc:
+            warn += f" [remove failed: {exc}]"
+        return False, msg + warn
+
     if "not_pdfa" in issues:
-        return False, f"Cannot repair non-PDF/A — manual conversion required{rejects_warning}"
+        msg = "Cannot repair non-PDF/A — manual conversion required"
+        warn = _append_rejects_csv(catalog_path, filepath, issues, msg)
+        try:
+            filepath.unlink()
+        except Exception as exc:
+            warn += f" [remove failed: {exc}]"
+        return False, msg + warn
 
     try:
         raw_img = Image.open(filepath)
@@ -108,7 +134,8 @@ def repair_file(
         img = raw_img.copy()
         raw_img.close()
     except Exception as exc:
-        return False, f"Cannot open image: {exc}"
+        msg = f"Cannot open image: {exc}"
+        return False, msg + _append_rejects_csv(catalog_path, filepath, issues, msg)
 
     applied = []
 
@@ -135,9 +162,11 @@ def repair_file(
         else:
             img.save(str(filepath))
     except Exception as exc:
-        return False, f"Cannot save repaired image: {exc}"
+        msg = f"Cannot save repaired image: {exc}"
+        return False, msg + _append_rejects_csv(catalog_path, filepath, issues, msg)
 
-    return True, "Repaired: " + ", ".join(applied) + rejects_warning
+    msg = "Repaired: " + "|".join(applied)
+    return True, msg + _append_rejects_csv(catalog_path, filepath, issues, msg)
 
 
 def main():
