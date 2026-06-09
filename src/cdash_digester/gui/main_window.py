@@ -88,7 +88,7 @@ class _AssignDialog(QDialog):
         layout = QFormLayout(self)
 
         self._place_edit = QLineEdit()
-        self._place_edit.setPlaceholderText("Omeka Place Item ID (integer)")
+        self._place_edit.setPlaceholderText("No Change")
         layout.addRow("Place ID:", self._place_edit)
 
         self._type_combo = QComboBox()
@@ -108,6 +108,10 @@ class _AssignDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
+
+    @property
+    def place_is_no_change(self) -> bool:
+        return self._place_edit.text().strip() == ""
 
     @property
     def place_id(self) -> Optional[int]:
@@ -311,22 +315,22 @@ class MainWindow(QMainWindow):
             return
 
         place_id = dlg.place_id
-        if place_id is None:
+        if place_id is None and not dlg.place_is_no_change:
             QMessageBox.warning(self, "Invalid Place ID",
                                 "Enter a numeric Omeka Place Item ID.")
             return
 
-        status, place_name = self.digester.validate_place(place_id)
-        if "Valid" not in status:
+        if place_id is not None:
+            status, place_name = self.digester.validate_place(place_id)
+            if "Valid" not in status:
+                self.console.append_message(
+                    f"Place validation failed: {status}", "error"
+                )
+                QMessageBox.warning(self, "Invalid Place ID", status)
+                return
             self.console.append_message(
-                f"Place validation failed: {status}", "error"
+                f"Place validated: {place_name} (ID {place_id})", "success"
             )
-            QMessageBox.warning(self, "Invalid Place ID", status)
-            return
-
-        self.console.append_message(
-            f"Place validated: {place_name} (ID {place_id})", "success"
-        )
         ok = self.digester.assign_media_to_doc(
             media_ids, place_id, dlg.doc_type_code, dlg.is_multi_page
         )

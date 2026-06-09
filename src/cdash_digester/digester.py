@@ -471,6 +471,18 @@ class Digester:
         doc = self.db.get_doc(row["doc_item_id"])
         return doc["doc_type_code"] if doc else None
 
+    def _current_place_info(self, media_id: int) -> Tuple[Optional[int], Optional[str]]:
+        """Return (place_id, place_name) from the existing doc for this media file."""
+        row = self.db.get_media(media_id)
+        if not row or not row.get("doc_item_id"):
+            return None, None
+        doc = self.db.get_doc(row["doc_item_id"])
+        if not doc or not doc.get("place_item_id"):
+            return None, None
+        place_row = self.db.get_place(doc["place_item_id"])
+        place_name = place_row["place_name"] if place_row else None
+        return doc["place_item_id"], place_name
+
     def assign_media_to_doc(self, media_ids: List[int], place_id: int,
                             doc_type_code: str, is_multi_page: bool) -> bool:
         """Assign selected media files to a new document.
@@ -482,10 +494,19 @@ class Digester:
         if not self.db:
             return False
 
-        p_status, place_name = self.validate_place(place_id)
-        if "Valid" not in p_status:
-            self.log(f"Place validation failed: {p_status}", "error")
-            return False
+        place_no_change = place_id is None
+        type_no_change  = doc_type_code is None
+
+        # Validate place when a new place_id was provided.
+        if not place_no_change:
+            p_status, place_name = self.validate_place(place_id)
+            if "Valid" not in p_status:
+                self.log(f"Place validation failed: {p_status}", "error")
+                return False
+            place_slug = slugify(place_name)
+        else:
+            place_name = None   # resolved per-file (or from first file for multi-page)
+            place_slug = None
 
         first = self.db.get_media(media_ids[0])
         if not first:
@@ -497,11 +518,9 @@ class Digester:
 
         docs = self.db.get_docs_for_folder(item_set_id)
         next_seq = max((d["folder_doc_sequence"] for d in docs), default=0) + 1
-        place_slug = slugify(place_name)
 
-        # "No Change" mode: preserve each file's existing doc_type.
-        no_change = doc_type_code is None
-        if no_change:
+        # For multi-page No Change doc_type: use first file's type.
+        if type_no_change:
             first_type = self._current_doc_type(media_ids[0])
             if first_type is None:
                 self.log(
@@ -509,7 +528,20 @@ class Digester:
                     "error",
                 )
                 return False
-            doc_type_code = first_type   # used for multi-page; overridden per-file in single-page
+            doc_type_code = first_type   # overridden per-file in single-page branch
+
+        # For No Change place: resolve from first file; for multi-page set globals now.
+        if place_no_change:
+            first_place_id, first_place_name = self._current_place_info(media_ids[0])
+            if first_place_id is None:
+                self.log(
+                    "Cannot determine place — first file has no existing place.", "error"
+                )
+                return False
+            if is_multi_page:
+                place_id   = first_place_id
+                place_name = first_place_name
+                place_slug = slugify(first_place_name)
 
         doc_title = f"{place_name} — {DOC_TYPES.get(doc_type_code, doc_type_code)}"
 
@@ -540,8 +572,22 @@ class Digester:
                 self.db.renumber_doc_pages(doc_id)
             else:
                 for page_num, media_id in enumerate(sorted(media_ids), start=1):
+                    # Resolve per-file place when No Change.
+                    if place_no_change:
+                        eff_place_id, eff_place_name = self._current_place_info(media_id)
+                        if eff_place_id is None:
+                            self.log(
+                                f"Skipping media {media_id}: no existing place.", "warning"
+                            )
+                            next_seq += 1
+                            continue
+                        eff_slug = slugify(eff_place_name)
+                    else:
+                        eff_place_id, eff_place_name, eff_slug = place_id, place_name, place_slug
+
+                    # Resolve per-file doc_type when No Change.
                     effective_type = (
-                        self._current_doc_type(media_id) if no_change else doc_type_code
+                        self._current_doc_type(media_id) if type_no_change else doc_type_code
                     )
                     if effective_type is None:
                         self.log(
@@ -549,12 +595,11 @@ class Digester:
                         )
                         next_seq += 1
                         continue
-                    eff_title = f"{place_name} — {DOC_TYPES.get(effective_type, effective_type)}"
-                    batch_doc_id = (
-                        f"{batch_folder_id}-{place_slug}-{next_seq:04d}-{effective_type}"
-                    )
+
+                    eff_title    = f"{eff_place_name} — {DOC_TYPES.get(effective_type, effective_type)}"
+                    batch_doc_id = f"{batch_folder_id}-{eff_slug}-{next_seq:04d}-{effective_type}"
                     doc_id = self.db.insert_doc(
-                        place_item_id=place_id,
+                        place_item_id=eff_place_id,
                         item_set_id=item_set_id,
                         folder_doc_sequence=next_seq,
                         doc_type_code=effective_type,
@@ -563,12 +608,11 @@ class Digester:
                         ready=True,
                     )
                     batch_media_id = (
-                        f"{batch_folder_id}-{place_slug}"
+                        f"{batch_folder_id}-{eff_slug}"
                         f"_{next_seq:04d}p0001-{effective_type}"
                     )
-                    self.db.assign_media_to_doc(media_id, doc_id, 1,
-                                                batch_media_id)
-                    self._rename_media(media_id, place_id, place_slug,
+                    self.db.assign_media_to_doc(media_id, doc_id, 1, batch_media_id)
+                    self._rename_media(media_id, eff_place_id, eff_slug,
                                        next_seq, 1, effective_type)
                     self.db.set_media_status(media_id, True)
                     self.db.renumber_doc_pages(doc_id)
