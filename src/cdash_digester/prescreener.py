@@ -90,6 +90,7 @@ def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
         doc = fitz.open(str(filepath))
         xmp = doc.get_xml_metadata() or ""
         doc.close()
+        fitz.TOOLS.mupdf_warnings(reset=True)
         has_pdfa_ns = "aiim.org/pdfa/ns/id/" in xmp
         has_conformance = any(
             marker in xmp for marker in (
@@ -163,6 +164,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             raw = (doc.metadata or {}).get("creationDate", "") or ""
             props["pdf_pages"] = doc.page_count
             doc.close()
+            fitz.TOOLS.mupdf_warnings(reset=True)
             if raw.startswith("D:") and len(raw) >= 10:
                 digits = raw[2:10]   # YYYYMMDD
                 props["capture_date"] = f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
@@ -441,6 +443,7 @@ def main():
                 for line in xmp[:800].splitlines():
                     print(f"    {line}")
             doc.close()
+            fitz.TOOLS.mupdf_warnings(reset=True)
         except Exception as exc:
             print(f"\nCannot open PDF: {exc}")
 

@@ -157,8 +157,10 @@ class MainWindow(QMainWindow):
         self.folder_pane = FolderPane()
         outer.addWidget(self.folder_pane)
 
+        # Right side: vertical splitter with media table, thumbnail pane, and console.
         right = QSplitter(Qt.Vertical)
         outer.addWidget(right)
+        # Left pane gets 1 part width, right side gets 3 parts width (1:3 ratio).
         outer.setStretchFactor(0, 1)
         outer.setStretchFactor(1, 3)
 
@@ -167,11 +169,14 @@ class MainWindow(QMainWindow):
 
         self.thumbnail_pane = ThumbnailPane()
         right.addWidget(self.thumbnail_pane)
-        right.setStretchFactor(0, 2)
-        right.setStretchFactor(1, 3)
 
         self.console = ConsoleWindow(self)
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.console)
+        right.addWidget(self.console)
+
+        # Right-side panels: media table and thumbnail each get 2/5 height, console gets 1/5.
+        right.setStretchFactor(0, 2)  # media table (2/5)
+        right.setStretchFactor(1, 2)  # thumbnail pane (2/5)
+        right.setStretchFactor(2, 1)  # console (1/5)
 
         # Bidirectional selection sync
         self.media_table.selection_changed.connect(

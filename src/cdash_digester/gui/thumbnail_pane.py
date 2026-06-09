@@ -55,6 +55,7 @@ def _render_pdf_page(filepath: Path) -> QPixmap:
         page = doc[0]
         pix = page.get_pixmap(matrix=fitz.Matrix(1, 1))
         doc.close()
+        fitz.TOOLS.mupdf_warnings(reset=True)
         if _DEBUG: print(f"DEBUG _render_pdf_page: pixmap {pix.width}x{pix.height}", flush=True)
         qi = QImage(pix.samples, pix.width, pix.height,
                     pix.stride, QImage.Format_RGB888)
