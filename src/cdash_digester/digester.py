@@ -243,6 +243,7 @@ class Digester:
 
         # doc_index → {"doc_item_id", "place_slug", "doc_type", "page_count"}
         doc_tracker: dict = {}
+        slug_place_tracker: dict = {}   # place_slug → place_id
         doc_seq = 0  # folder_doc_sequence counter
 
         for filepath in media_files:
@@ -287,9 +288,12 @@ class Digester:
 
             
             if doc_index in doc_tracker and (place_slug == doc_tracker[doc_index]["place_slug"] and place_id == None):
-                # same document no place_id 
+                # same document no place_id
                 place_id = doc_tracker[doc_index]["place_id"]
                 doc_type = doc_tracker[doc_index]["doc_type"]
+            elif place_id is None and place_slug in slug_place_tracker:
+                # same slug seen before — inherit place_id only, not doc_type
+                place_id = slug_place_tracker[place_slug]
 
 
             # 3. Place validation
@@ -323,7 +327,9 @@ class Digester:
 
             if place_id is None:
                 notes_parts.append("No place ID in filename")
-                
+            else:
+                slug_place_tracker[place_slug] = place_id
+
             media_ready = not notes_parts
 
             # 4. Doc tracking / creation

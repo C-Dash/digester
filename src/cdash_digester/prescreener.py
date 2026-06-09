@@ -78,22 +78,34 @@ def _get_exiftool_tags(filepath: Path) -> dict:
 
 
 def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
-    """Return (ok, message, flavor) for PDF/A-1b conformance via XMP marker.
+    """Return (ok, message, flavor) for PDF/A conformance via XMP marker.
 
-    flavor is "PDF/A-1b" when the conformance marker is present, "PDF" otherwise.
+    Checks for the pdfaid namespace URI and a conformance value (A/B/U/E/F)
+    in either element or attribute form, regardless of the namespace prefix
+    used by the file.  Accepts PDF/A-1, -2, -3, and -4 at any level.
+
+    flavor is "PDF/A" when the conformance marker is present, "PDF" otherwise.
     """
     try:
         doc = fitz.open(str(filepath))
         xmp = doc.get_xml_metadata() or ""
         doc.close()
-        if "pdfaid:conformance" in xmp and (
-            "<pdfaid:conformance>B</pdfaid:conformance>" in xmp
-            or "<pdfaid:conformance>b</pdfaid:conformance>" in xmp
-        ):
-            return True, "PDF/A-1b confirmed", "PDF/A-1b"
-        # pbc flipped the following to true because we want the note, but not
-        # to reject.
-        return True, "PDF/A-1b conformance marker not found in XMP metadata", "PDF"
+        has_pdfa_ns = "aiim.org/pdfa/ns/id/" in xmp
+        has_conformance = any(
+            marker in xmp for marker in (
+                ":conformance>B<", ":conformance>b<",
+                ":conformance>A<", ":conformance>a<",
+                ":conformance>U<", ":conformance>u<",
+                ":conformance>E<", ":conformance>F<",
+                'conformance="B"', 'conformance="b"',
+                'conformance="A"', 'conformance="a"',
+                'conformance="U"', 'conformance="u"',
+                'conformance="E"', 'conformance="F"',
+            )
+        )
+        if has_pdfa_ns and has_conformance:
+            return True, "PDF/A conformance marker found", "PDF/A"
+        return False, "PDF/A conformance marker not found in XMP metadata", "PDF"
     except Exception as exc:
         return False, f"PDF error: {exc}", "PDF"
 
@@ -142,7 +154,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         ok, msg, flavor = _check_pdf_a1b(filepath)
         props["qa_note"] = msg
         props["format"]  = flavor
-        if ok and flavor != "PDF/A-1b":
+        if not ok: 
             props["repair_issues"].append("not_pdfa")
             ok = False
         # Extract creation date and page count from PDF metadata.
@@ -210,22 +222,22 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             props["qa_note"] = "multiframe-tiff"
             return False, props
 
-        # Non-repairable structural checks — return immediately.
         tag_v2 = getattr(img, "tag_v2", {})
         compression = tag_v2.get(259)   # TIFF tag 259 = Compression
-        if compression != _TIFF_LZW:
-            props["qa_note"] = (
-                f"TIFF must use LZW compression "
-                f"(compression code {compression} found)"
-            )
-            return False, props
 
+        # 16-bit is non-repairable — return immediately.
         if img.mode in ("I;16", "F"):
             props["qa_note"] = "16-bit TIFFs are not accepted"
             return False, props
 
         # Repairable checks — accumulate all issues before returning.
         qa_parts = []
+
+        if compression != _TIFF_LZW:
+            props["repair_issues"].append("wrong_compression")
+            qa_parts.append(
+                f"TIFF must use LZW compression (code {compression} found)"
+            )
 
         if img.mode not in ("RGB", "L"):
             qa_parts.append(

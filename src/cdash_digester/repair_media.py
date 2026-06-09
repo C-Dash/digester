@@ -150,10 +150,13 @@ def repair_file(
     # 2. iphone_vert -> rotate to landscape orientation
     if "iphone_vert" in issues:
         orientation = _get_exif_orientation(filepath)
-        print("orientation is: ", orientation)
         angle = _ORIENTATION_ROTATION.get(orientation, _DEFAULT_VERT_ROTATION)
         img = img.rotate(angle, expand=True)
         applied.append(f"rotated {angle} degrees CCW")
+
+    # 3. wrong_compression -> LZW applied on save (no pixel transform needed)
+    if "wrong_compression" in issues:
+        applied.append("lzw compression applied")
 
     suffix = filepath.suffix.lower()
     try:
