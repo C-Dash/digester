@@ -92,6 +92,7 @@ class _AssignDialog(QDialog):
         layout.addRow("Place ID:", self._place_edit)
 
         self._type_combo = QComboBox()
+        self._type_combo.addItem("— No Change —", None)
         for code, desc in DOC_TYPES.items():
             self._type_combo.addItem(f"{code} — {desc}", code)
         layout.addRow("Document Type:", self._type_combo)

@@ -206,7 +206,7 @@ class Digester:
             cdash_folder_name = parsed["slug"]
             name_ready = False
 
-        # Rename folder to canonical form if necessary
+        # Rename folder to validated, identified form if necessary
         canonical = f"F{folder_index}-{slugify(cdash_folder_name)}-OF{item_set_id}"
         if folder_dir.name != canonical:
             new_path = folder_dir.parent / canonical
@@ -463,6 +463,14 @@ class Digester:
 
     # -------------------------------------------------- interactive assign
 
+    def _current_doc_type(self, media_id: int) -> Optional[str]:
+        """Return the doc_type_code from the existing doc for this media file."""
+        row = self.db.get_media(media_id)
+        if not row or not row.get("doc_item_id"):
+            return None
+        doc = self.db.get_doc(row["doc_item_id"])
+        return doc["doc_type_code"] if doc else None
+
     def assign_media_to_doc(self, media_ids: List[int], place_id: int,
                             doc_type_code: str, is_multi_page: bool) -> bool:
         """Assign selected media files to a new document.
@@ -489,8 +497,21 @@ class Digester:
 
         docs = self.db.get_docs_for_folder(item_set_id)
         next_seq = max((d["folder_doc_sequence"] for d in docs), default=0) + 1
-        doc_title = f"{place_name} — {DOC_TYPES.get(doc_type_code, doc_type_code)}"
         place_slug = slugify(place_name)
+
+        # "No Change" mode: preserve each file's existing doc_type.
+        no_change = doc_type_code is None
+        if no_change:
+            first_type = self._current_doc_type(media_ids[0])
+            if first_type is None:
+                self.log(
+                    "Cannot determine doc type — first file has no existing document.",
+                    "error",
+                )
+                return False
+            doc_type_code = first_type   # used for multi-page; overridden per-file in single-page
+
+        doc_title = f"{place_name} — {DOC_TYPES.get(doc_type_code, doc_type_code)}"
 
         try:
             if is_multi_page:
@@ -519,26 +540,36 @@ class Digester:
                 self.db.renumber_doc_pages(doc_id)
             else:
                 for page_num, media_id in enumerate(sorted(media_ids), start=1):
+                    effective_type = (
+                        self._current_doc_type(media_id) if no_change else doc_type_code
+                    )
+                    if effective_type is None:
+                        self.log(
+                            f"Skipping media {media_id}: no existing doc type.", "warning"
+                        )
+                        next_seq += 1
+                        continue
+                    eff_title = f"{place_name} — {DOC_TYPES.get(effective_type, effective_type)}"
                     batch_doc_id = (
-                        f"{batch_folder_id}-{place_slug}-{next_seq:04d}-{doc_type_code}"
+                        f"{batch_folder_id}-{place_slug}-{next_seq:04d}-{effective_type}"
                     )
                     doc_id = self.db.insert_doc(
                         place_item_id=place_id,
                         item_set_id=item_set_id,
                         folder_doc_sequence=next_seq,
-                        doc_type_code=doc_type_code,
-                        doc_title=doc_title,
+                        doc_type_code=effective_type,
+                        doc_title=eff_title,
                         batch_doc_id=batch_doc_id,
                         ready=True,
                     )
                     batch_media_id = (
                         f"{batch_folder_id}-{place_slug}"
-                        f"_{next_seq:04d}p0001-{doc_type_code}"
+                        f"_{next_seq:04d}p0001-{effective_type}"
                     )
                     self.db.assign_media_to_doc(media_id, doc_id, 1,
                                                 batch_media_id)
                     self._rename_media(media_id, place_id, place_slug,
-                                       next_seq, 1, doc_type_code)
+                                       next_seq, 1, effective_type)
                     self.db.set_media_status(media_id, True)
                     self.db.renumber_doc_pages(doc_id)
                     next_seq += 1
