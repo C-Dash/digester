@@ -179,9 +179,11 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         return ok, props
 
     # Image path (JPEG / TIFF)
+    # Open lazily — mode/size/n_frames/tag_v2 are readable without decoding
+    # pixels. Full decode (img.load) is deferred to after all fast checks so
+    # files that fail early never pay the decode cost.
     try:
         img = Image.open(filepath)
-        img.load()
     except (UnidentifiedImageError, Exception) as exc:
         props["qa_note"] = f"Cannot open image: {exc}"
         return False, props
@@ -256,6 +258,13 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         if props["repair_issues"]:
             props["qa_note"] = "; ".join(qa_parts) if qa_parts else ", ".join(props["repair_issues"])
             return False, props
+
+    # All checks passed — force full decode now to catch corrupt files.
+    try:
+        img.load()
+    except Exception as exc:
+        props["qa_note"] = f"Cannot decode image: {exc}"
+        return False, props
 
     props["qa_note"] = "OK"
     return True, props
