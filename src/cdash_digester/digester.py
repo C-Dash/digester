@@ -543,7 +543,7 @@ class Digester:
                 place_name = first_place_name
                 place_slug = slugify(first_place_name)
 
-        doc_title = f"{place_name} — {DOC_TYPES.get(doc_type_code, doc_type_code)}"
+        doc_title = f"{place_name} - {DOC_TYPES.get(doc_type_code, doc_type_code)}"
 
         try:
             if is_multi_page:
