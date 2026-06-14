@@ -151,7 +151,7 @@ class BatchDB:
     def _bool_row_factory(cursor: sqlite3.Cursor, row: tuple):
         """sqlite3.Row-compatible factory that also converts 0/1 bool columns."""
         _BOOL_COLS = {
-            "ready", "name_ready", "media_ready",
+            "ready", "name_ready", "media_ready", "accepted",
         }
         fields = [d[0] for d in cursor.description]
         d = {}
@@ -267,6 +267,23 @@ class BatchDB:
                 lon           REAL,
                 status        TEXT,
                 fetched_date  TEXT
+            )""",
+            # ------ file cache (persists across scans; prescreener results)
+            """CREATE TABLE IF NOT EXISTS cdash_file_cache (
+                filepath        TEXT PRIMARY KEY,
+                file_size_bytes INTEGER,
+                mtime_ns        INTEGER,
+                accepted        INTEGER,
+                file_size_mb    REAL,
+                pixel_width     INTEGER,
+                pixel_height    INTEGER,
+                format          TEXT,
+                capture_date    TEXT,
+                date_source     TEXT,
+                qa_note         TEXT,
+                repair_issues   TEXT,
+                pdf_pages       INTEGER,
+                fetched_date    TEXT
             )""",
         ]
         for stmt in stmts:
@@ -529,6 +546,55 @@ class BatchDB:
                     fetched_date=excluded.fetched_date""",
             (place_item_id, *vals, status,
              datetime.now().isoformat(timespec="seconds")),
+        )
+        self._con.commit()
+
+    def get_file_cache(self, filepath: str) -> Optional[dict]:
+        return self._con.execute(
+            "SELECT * FROM cdash_file_cache WHERE filepath=?", (filepath,)
+        ).fetchone()
+
+    def upsert_file_cache(self, filepath: str, file_size_bytes: int,
+                          mtime_ns: int, accepted: bool, props: dict):
+        self._con.execute(
+            """INSERT INTO cdash_file_cache
+                   (filepath, file_size_bytes, mtime_ns, accepted, file_size_mb,
+                    pixel_width, pixel_height, format, capture_date, date_source,
+                    qa_note, repair_issues, pdf_pages, fetched_date)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(filepath) DO UPDATE SET
+                   file_size_bytes=excluded.file_size_bytes,
+                   mtime_ns=excluded.mtime_ns,
+                   accepted=excluded.accepted,
+                   file_size_mb=excluded.file_size_mb,
+                   pixel_width=excluded.pixel_width,
+                   pixel_height=excluded.pixel_height,
+                   format=excluded.format,
+                   capture_date=excluded.capture_date,
+                   date_source=excluded.date_source,
+                   qa_note=excluded.qa_note,
+                   repair_issues=excluded.repair_issues,
+                   pdf_pages=excluded.pdf_pages,
+                   fetched_date=excluded.fetched_date""",
+            (filepath, file_size_bytes, mtime_ns, int(accepted),
+             props.get("file_size_mb"), props.get("pixel_width"),
+             props.get("pixel_height"), props.get("format"),
+             props.get("capture_date"), props.get("date_source"),
+             props.get("qa_note"), ", ".join(props.get("repair_issues", [])),
+             props.get("pdf_pages"),
+             datetime.now().isoformat(timespec="seconds")),
+        )
+        self._con.commit()
+
+    def update_file_cache_path(self, old_path: str, new_path: str):
+        """Re-key a file-cache row after the file is renamed on disk.
+        Drops any stale row already occupying new_path first."""
+        self._con.execute(
+            "DELETE FROM cdash_file_cache WHERE filepath=?", (new_path,)
+        )
+        self._con.execute(
+            "UPDATE cdash_file_cache SET filepath=? WHERE filepath=?",
+            (new_path, old_path),
         )
         self._con.commit()
 

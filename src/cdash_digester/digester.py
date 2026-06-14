@@ -274,8 +274,8 @@ class Digester:
             notes_parts: list = []
             repair_issues = ""
 
-            # 1. Format screening
-            accepted, props = screen_file(filepath)
+            # 1. Format screening (cache → prescreener, see _screen_file_cached)
+            accepted, props = self._screen_file_cached(filepath)
             repair_issues = ", ".join(props.get("repair_issues", []))
             if not accepted:
                 notes_parts.append(props.get("qa_note", "Format rejected"))
@@ -409,9 +409,13 @@ class Digester:
                 if new_name != filepath.name:
                     new_path = filepath.parent / new_name
                     try:
+                        old_rel = rel_path
                         filepath.rename(new_path)
                         filepath = new_path
                         rel_path = str(filepath.relative_to(self.batch_path))
+                        # Re-key the file cache so the next scan hits the cache
+                        # under the canonical name (rename preserves mtime/size).
+                        self.db.update_file_cache_path(old_rel, rel_path)
                         self.log(f"    -> {new_name}", "info")
                     except OSError as exc:
                         self.log(f"    Rename failed: {exc}", "error")
@@ -436,6 +440,45 @@ class Digester:
             )
 
         self.db.recalculate_folder_status(item_set_id)
+
+    # ---------------------------------------------------- prescreener cache
+
+    def _screen_file_cached(self, filepath: Path) -> Tuple[bool, dict]:
+        """Return (accepted, props) for filepath, using cdash_file_cache when
+        the file's size and mtime are unchanged since it was last screened.
+
+        The cache is keyed by the file's path relative to the batch root.  On a
+        miss (new file, changed size/mtime, or a failed stat) the prescreener is
+        invoked and the result cached.  prescreener.screen_file stays
+        cache-unaware; all cache logic lives here.
+        """
+        rel_path = str(filepath.relative_to(self.batch_path))
+        try:
+            st = filepath.stat()
+            size_bytes, mtime_ns = st.st_size, st.st_mtime_ns
+        except OSError:
+            # Let the prescreener surface the error; do not cache a bad stat.
+            return screen_file(filepath)
+
+        cached = self.db.get_file_cache(rel_path)
+        if (cached and cached["file_size_bytes"] == size_bytes
+                and cached["mtime_ns"] == mtime_ns):
+            props = {
+                "file_size_mb":  cached["file_size_mb"],
+                "pixel_width":   cached["pixel_width"],
+                "pixel_height":  cached["pixel_height"],
+                "format":        cached["format"],
+                "capture_date":  cached["capture_date"],
+                "date_source":   cached["date_source"],
+                "qa_note":       cached["qa_note"],
+                "repair_issues": parse_repair_issues(cached["repair_issues"]),
+                "pdf_pages":     cached["pdf_pages"],
+            }
+            return cached["accepted"], props
+
+        accepted, props = screen_file(filepath)
+        self.db.upsert_file_cache(rel_path, size_bytes, mtime_ns, accepted, props)
+        return accepted, props
 
     # ---------------------------------------------------------- place helper
 
