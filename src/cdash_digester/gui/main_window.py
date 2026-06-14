@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from PySide6.QtCore import QThread, Signal, Slot, Qt
+from PySide6.QtCore import QLoggingCategory, QThread, Signal, Slot, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox,
@@ -434,6 +434,7 @@ class MainWindow(QMainWindow):
 # ---------------------------------------------------------------------------
 
 def main():
+    QLoggingCategory.setFilterRules("qt.gui.imageio=false")
     app = QApplication(sys.argv)
     app.setApplicationName("CDASH Presort Digester")
     window = MainWindow()

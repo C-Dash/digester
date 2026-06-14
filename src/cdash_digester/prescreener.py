@@ -52,8 +52,8 @@ _ACCEPTED_SUFFIXES = {".jpg", ".jpeg", ".tif", ".tiff", ".pdf"}
 _CLEAN_MODES = {
     ".jpg":  {"RGB"},
     ".jpeg": {"RGB"},
-    ".tif":  {"RGB", "L"},
-    ".tiff": {"RGB", "L"},
+    ".tif":  {"RGB", "L", "1"},
+    ".tiff": {"RGB", "L", "1"},
 }
 
 _REJECTS_FIELDS = [
@@ -139,6 +139,19 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         props["qa_note"] = f"Unsupported file type: {suffix}"
         return False, props
 
+    # For TIFFs: check compression before the size check so wrong_compression is
+    # recorded in repair_issues even when the file is also oversized.  PIL.open
+    # is lazy here — only the header is read, no pixel decode.
+    img = None
+    if suffix in (".tif", ".tiff"):
+        try:
+            img = Image.open(filepath)
+            tag_v2 = getattr(img, "tag_v2", {})
+            if tag_v2.get(259) != _TIFF_LZW:
+                props["repair_issues"].append("wrong_compression")
+        except Exception:
+            img = None  # open failure is surfaced in the main image path below
+
     # File-size check
     try:
         mb = filepath.stat().st_size / (1024 * 1024)
@@ -182,8 +195,10 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     # Open lazily — mode/size/n_frames/tag_v2 are readable without decoding
     # pixels. Full decode (img.load) is deferred to after all fast checks so
     # files that fail early never pay the decode cost.
+    # For TIFFs img may already be open from the early compression check above.
     try:
-        img = Image.open(filepath)
+        if img is None:
+            img = Image.open(filepath)
     except (UnidentifiedImageError, Exception) as exc:
         props["qa_note"] = f"Cannot open image: {exc}"
         return False, props
@@ -234,18 +249,18 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             props["qa_note"] = "16-bit TIFFs are not accepted"
             return False, props
 
-        # Repairable checks — accumulate all issues before returning.
+        # Repairable checks — accumulate qa_parts; wrong_compression was already
+        # added to repair_issues before the size check.
         qa_parts = []
 
         if compression != _TIFF_LZW:
-            props["repair_issues"].append("wrong_compression")
             qa_parts.append(
                 f"TIFF must use LZW compression (code {compression} found)"
             )
 
-        if img.mode not in ("RGB", "L"):
+        if img.mode not in ("RGB", "L", "1"):
             qa_parts.append(
-                f"TIFF must be 24-bit RGB or 8-bit grayscale; got {img.mode}"
+                f"TIFF must be 24-bit RGB, 8-bit grayscale, or 1-bit bilevel; got {img.mode}"
             )
 
         # iPhone portrait: non-normal EXIF Orientation or portrait pixel dimensions.
