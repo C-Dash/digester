@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from .cdash_objects import (
-    BatchDB, DOC_TYPES, ACCEPTED_SUFFIXES,
+    BatchDB, DOC_TYPES, ACCEPTED_SUFFIXES, PLACE_PROP_KEYS,
     parse_batch_name, parse_folder_name, parse_media_name, slugify,
 )
 from .prescreener import screen_file
@@ -136,8 +136,23 @@ class Digester:
         folder_dirs = sorted(
             p for p in self.media_path.iterdir() if p.is_dir()
         )
-        for idx, folder_dir in enumerate(folder_dirs, start=1):
-            self._scan_folder(folder_dir, folder_index=idx,
+        # Folder indices are persistent: a folder already in the cache keeps its
+        # index (so it is never renamed/renumbered); a newly added folder gets
+        # the next available index.
+        next_index = self.db.max_folder_cache_index() + 1
+        for folder_dir in folder_dirs:
+            fparsed = parse_folder_name(folder_dir.name)
+            if not fparsed:
+                self._scan_folder(folder_dir, folder_index=None,
+                                  batch_id=parsed["batch_id"])
+                continue
+            cached = self.db.get_folder_cache(fparsed["item_set_id"])
+            if cached and cached["folder_index"] is not None:
+                folder_index = cached["folder_index"]
+            else:
+                folder_index = next_index
+                next_index += 1
+            self._scan_folder(folder_dir, folder_index=folder_index,
                               batch_id=parsed["batch_id"])
 
         self.db.recalculate_batch_ready()
@@ -193,16 +208,26 @@ class Digester:
         item_set_id = parsed["item_set_id"]
         batch_folder_id = f"{batch_id}F{folder_index}"
 
-        # Validate item_set_id via API
-        api_status, api_name = self._validator.validate_folder(item_set_id)
-        if "Valid" in api_status:
-            cdash_folder_name = api_name
+        # Resolve the folder name from the persistent cache, falling back to the
+        # validator API on a miss.  Only valid results are cached, so an invalid
+        # folder is retried via the API on the next scan.
+        cache = self.db.get_folder_cache(item_set_id)
+        if cache and cache["status"] == "valid":
+            cdash_folder_name = cache["cdash_folder_name"]
             name_ready = True
-            self.log(f"  Validated folder: {api_name}", "info")
+            self.log(f"  Validated folder (cached): {cdash_folder_name}", "info")
         else:
-            self.log(f"  Folder ID {item_set_id}: {api_status}", "warning")
-            cdash_folder_name = parsed["slug"]
-            name_ready = False
+            api_status, api_name = self._validator.validate_folder(item_set_id)
+            if "Valid" in api_status:
+                cdash_folder_name = api_name
+                name_ready = True
+                self.log(f"  Validated folder: {api_name}", "info")
+                self.db.upsert_folder_cache(
+                    item_set_id, cdash_folder_name, folder_index, "valid")
+            else:
+                self.log(f"  Folder ID {item_set_id}: {api_status}", "warning")
+                cdash_folder_name = parsed["slug"]
+                name_ready = False
 
         # Rename folder to validated, identified form if necessary
         canonical = f"F{folder_index}-{slugify(cdash_folder_name)}-OF{item_set_id}"
@@ -294,33 +319,16 @@ class Digester:
                 place_id = slug_place_tracker[place_slug]
 
 
-            # 3. Place validation
+            # 3. Place validation (cache → API, see _ensure_place)
             place_name = None
             if place_id is not None:
-                cached = self.db.get_place(place_id)
-                if cached:
-                    place_name = cached["place_name"]
+                p_status, p_name = self._ensure_place(place_id)
+                if "Valid" in p_status:
+                    place_name = p_name or parsed["place_slug"]
                 else:
-                    p_status, p_props = self._validator.validate_place(place_id)
-                    if "Valid" in p_status and p_props:
-                        place_name = p_props.get("place_name") or parsed["place_slug"]
-                        self.db.upsert_place(
-                            place_item_id=place_id,
-                            place_name=place_name,
-                            place_type=p_props.get("place_type"),
-                            house_num=p_props.get("house_num"),
-                            street_name=p_props.get("street_name"),
-                            street_sort=p_props.get("street_sort"),
-                            neighborhood=p_props.get("neighborhood"),
-                            chc_dist=p_props.get("chc_dist"),
-                            item_set_ids=p_props.get("item_set_ids"),
-                            lat=p_props.get("lat"),
-                            lon=p_props.get("lon"),
-                        )
-                    else:
-                        self.log(f"    Place {place_id}: {p_status}", "error")
-                        notes_parts.append(f"Place {place_id}: {p_status}")
-                        place_name = parsed["place_slug"]
+                    self.log(f"    Place {place_id}: {p_status}", "error")
+                    notes_parts.append(f"Place {place_id}: {p_status}")
+                    place_name = parsed["place_slug"]
 
 
             if place_id is None:
@@ -435,27 +443,38 @@ class Digester:
         """Validate a place ID, register in DB if valid.
         Returns (status, place_name).
         """
-        if self.db:
-            cached = self.db.get_place(place_id)
-            if cached:
-                return "Valid CDASH place (cached)", cached["place_name"]
+        return self._ensure_place(place_id)
+
+    def _ensure_place(self, place_id: int) -> Tuple[str, str]:
+        """Ensure the working cdash_place row for place_id is populated.
+
+        Resolution order, cheapest first:
+          1. cdash_place         — already populated during this scan.
+          2. cdash_place_cache   — persistent validator cache (no network).
+          3. validator API       — on a miss; result is written to both the
+                                    cache and the working table.
+        Only valid results are cached, so an invalid place is retried via the
+        API on the next scan.  Returns (status, place_name).
+        """
+        if not self.db:
+            status, props = self._validator.validate_place(place_id)
+            return status, (props.get("place_name", "") if props else "")
+
+        existing = self.db.get_place(place_id)
+        if existing:
+            return "Valid CDASH place (cached)", existing["place_name"]
+
+        cache = self.db.get_place_cache(place_id)
+        if cache and cache["status"] == "valid":
+            props = {k: cache[k] for k in PLACE_PROP_KEYS}
+            self.db.upsert_place(place_item_id=place_id, **props)
+            return "Valid CDASH place (cached)", cache["place_name"]
 
         status, props = self._validator.validate_place(place_id)
-        if "Valid" in status and props and self.db:
+        if "Valid" in status and props:
             place_name = props.get("place_name", "")
-            self.db.upsert_place(
-                place_item_id=place_id,
-                place_name=place_name,
-                place_type=props.get("place_type"),
-                house_num=props.get("house_num"),
-                street_name=props.get("street_name"),
-                street_sort=props.get("street_sort"),
-                neighborhood=props.get("neighborhood"),
-                chc_dist=props.get("chc_dist"),
-                item_set_ids=props.get("item_set_ids"),
-                lat=props.get("lat"),
-                lon=props.get("lon"),
-            )
+            self.db.upsert_place_cache(place_id, props, "valid")
+            self.db.upsert_place(place_item_id=place_id, **props)
             return status, place_name
         return status, ""
 

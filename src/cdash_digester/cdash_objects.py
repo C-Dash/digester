@@ -15,6 +15,7 @@ Layout
 
 import re
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -41,6 +42,13 @@ DOC_TYPES: dict[str, str] = {
 }
 
 ACCEPTED_SUFFIXES = {".tif", ".tiff", ".jpg", ".jpeg", ".pdf"}
+
+# Place property keys shared by the validator output, the cdash_place working
+# table, and the cdash_place_cache table.
+PLACE_PROP_KEYS = (
+    "place_name", "place_type", "house_num", "street_name", "street_sort",
+    "neighborhood", "chc_dist", "item_set_ids", "lat", "lon",
+)
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -235,6 +243,30 @@ class BatchDB:
                 repair_issues TEXT,
                 ready        INTEGER DEFAULT 0,
                 notes        TEXT
+            )""",
+            # ------ folder cache (persists across scans; validator results)
+            """CREATE TABLE IF NOT EXISTS cdash_folder_cache (
+                item_set_id       INTEGER PRIMARY KEY,
+                cdash_folder_name TEXT,
+                folder_index      INTEGER,
+                status            TEXT,
+                fetched_date      TEXT
+            )""",
+            # ------ place cache (persists across scans; validator results)
+            """CREATE TABLE IF NOT EXISTS cdash_place_cache (
+                place_item_id INTEGER PRIMARY KEY,
+                place_name    TEXT,
+                place_type    TEXT,
+                house_num     TEXT,
+                street_name   TEXT,
+                street_sort   TEXT,
+                neighborhood  TEXT,
+                chc_dist      TEXT,
+                item_set_ids  TEXT,
+                lat           REAL,
+                lon           REAL,
+                status        TEXT,
+                fetched_date  TEXT
             )""",
         ]
         for stmt in stmts:
@@ -445,6 +477,60 @@ class BatchDB:
         return self._con.execute(
             "SELECT * FROM cdash_place WHERE place_item_id=?", (place_item_id,)
         ).fetchone()
+
+    # ----------------------------------------------------- persistent caches
+
+    def get_folder_cache(self, item_set_id: int) -> Optional[dict]:
+        return self._con.execute(
+            "SELECT * FROM cdash_folder_cache WHERE item_set_id=?", (item_set_id,)
+        ).fetchone()
+
+    def upsert_folder_cache(self, item_set_id: int, cdash_folder_name: str,
+                            folder_index: int, status: str = "valid"):
+        self._con.execute(
+            """INSERT INTO cdash_folder_cache
+                   (item_set_id, cdash_folder_name, folder_index, status, fetched_date)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(item_set_id) DO UPDATE SET
+                   cdash_folder_name=excluded.cdash_folder_name,
+                   folder_index=excluded.folder_index,
+                   status=excluded.status,
+                   fetched_date=excluded.fetched_date""",
+            (item_set_id, cdash_folder_name, folder_index, status,
+             datetime.now().isoformat(timespec="seconds")),
+        )
+        self._con.commit()
+
+    def max_folder_cache_index(self) -> int:
+        """Highest folder_index recorded in the folder cache (0 if empty)."""
+        row = self._con.execute(
+            "SELECT MAX(folder_index) AS m FROM cdash_folder_cache"
+        ).fetchone()
+        return row["m"] if row and row["m"] is not None else 0
+
+    def get_place_cache(self, place_item_id: int) -> Optional[dict]:
+        return self._con.execute(
+            "SELECT * FROM cdash_place_cache WHERE place_item_id=?", (place_item_id,)
+        ).fetchone()
+
+    def upsert_place_cache(self, place_item_id: int, props: dict,
+                           status: str = "valid"):
+        cols = ", ".join(PLACE_PROP_KEYS)
+        vals = [props.get(k) for k in PLACE_PROP_KEYS]
+        placeholders = ", ".join("?" for _ in PLACE_PROP_KEYS)
+        updates = ", ".join(f"{k}=excluded.{k}" for k in PLACE_PROP_KEYS)
+        self._con.execute(
+            f"""INSERT INTO cdash_place_cache
+                    (place_item_id, {cols}, status, fetched_date)
+                VALUES (?, {placeholders}, ?, ?)
+                ON CONFLICT(place_item_id) DO UPDATE SET
+                    {updates},
+                    status=excluded.status,
+                    fetched_date=excluded.fetched_date""",
+            (place_item_id, *vals, status,
+             datetime.now().isoformat(timespec="seconds")),
+        )
+        self._con.commit()
 
     # -------------------------------------------------------------------- doc
 
