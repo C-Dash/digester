@@ -121,12 +121,10 @@ class Digester:
         if not parsed:
             return
 
-        # Rebuild the database
-        self.db.close()
-        if self.db_path.exists():
-            self.db_path.unlink()
-        self.db = BatchDB(self.db_path)
+        # Rebuild the working tables in place, preserving the DB file and any
+        # persistent cache tables (cdash_batch is kept and updated below).
         self.db.create_all_tables()
+        self.db.clear_working_tables()
         self.db.upsert_batch(
             batch_id=parsed["batch_id"],
             name=parsed["name"],

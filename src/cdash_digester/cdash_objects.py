@@ -242,6 +242,13 @@ class BatchDB:
         self._con.commit()
         self._migrate()
 
+    def clear_working_tables(self):
+        """Delete all rows from the per-scan working tables, preserving
+        cdash_batch and any persistent cache tables."""
+        for t in ("cdash_media", "cdash_doc", "cdash_place", "cdash_folder"):
+            self._con.execute(f"DELETE FROM {t}")
+        self._con.commit()
+
     def _migrate(self):
         """Add new columns to existing databases that predate schema additions."""
         new_cols = [
