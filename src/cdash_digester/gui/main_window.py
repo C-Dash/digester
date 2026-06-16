@@ -18,12 +18,13 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
-    QRadioButton, QSplitter, QWidget,
+    QRadioButton, QSplitter, QVBoxLayout, QWidget,
 )
 
 from ..cdash_objects import DOC_TYPES
 from ..digester import Digester
 from .console_window import ConsoleWindow
+from .folder_info_pane import FolderInfoPane
 from .folder_pane import FolderPane
 from .media_table import MediaTablePane
 from .thumbnail_pane import ThumbnailPane
@@ -164,8 +165,16 @@ class MainWindow(QMainWindow):
         outer.setStretchFactor(0, 1)
         outer.setStretchFactor(1, 3)
 
+        # Top-right slot: a fixed-height folder-info strip above the media table.
+        top = QWidget()
+        top_layout = QVBoxLayout(top)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(2)
+        self.folder_info = FolderInfoPane()
         self.media_table = MediaTablePane()
-        right.addWidget(self.media_table)
+        top_layout.addWidget(self.folder_info)
+        top_layout.addWidget(self.media_table)
+        right.addWidget(top)
 
         self.thumbnail_pane = ThumbnailPane()
         right.addWidget(self.thumbnail_pane)
@@ -245,6 +254,7 @@ class MainWindow(QMainWindow):
             return
         self.batch_root = Path(folder)
         self.console.clear()
+        self.folder_info.clear()
         self.console.append_message(f"Selected: {folder}", "info")
         self.digester = Digester(self.batch_root, self.console.append_message)
         self.digester.load_or_initialize()
@@ -309,6 +319,9 @@ class MainWindow(QMainWindow):
             self.digester.reopen_db()
         if not self.digester.db:
             return
+        self.folder_info.show_folder(
+            self.digester.db.get_folder_by_item_set(item_set_id)
+        )
         rows = self.digester.db.get_media_for_folder(item_set_id)
         self.media_table.load_media(rows)
         self.thumbnail_pane.load_media(rows, self.batch_root)

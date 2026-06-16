@@ -116,8 +116,18 @@ class ScanService:
         parsed = parse_folder_name(folder_dir.name)
         if not parsed:
             dig.log(
-                f"  Cannot parse folder name — skipping: {folder_dir.name}",
+                f"  Cannot parse folder name — not ready: {folder_dir.name}",
                 "warning",
+            )
+            # Register the folder as not name-ready so the problem surfaces in
+            # the batch. There is no item_set_id to key on (NULL) and no media
+            # is scanned for it.
+            dig.db.upsert_folder(
+                item_set_id=None,
+                cdash_folder_name=folder_dir.name,
+                os_folder_name=folder_dir.name,
+                name_ready=False,
+                notes="Folder name not in CDASH format",
             )
             return
 

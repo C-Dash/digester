@@ -76,6 +76,32 @@ def test_rescan_short_circuits_validator(scanned):
     assert len(validator.place_calls) == place_calls
 
 
+def test_unparseable_folder_registered_not_ready(make_batch):
+    """A media subfolder whose name can't be parsed is registered as a
+    not-name-ready folder row (item_set_id NULL) rather than skipped."""
+    root = make_batch("CDB260430-Test_batch")
+    (root / "media" / "Nonsense").mkdir(parents=True)
+    good = root / "media" / "F1-Main-OF101"
+    good.mkdir(parents=True)
+    _media(good, "Main", 1, 1, "VE", 55)
+
+    validator = FakeValidator(folders={101: "Main St Folder"},
+                              places={55: place_props("Main Place")})
+    d = Digester(root, log=lambda *a, **k: None)
+    d.load_or_initialize()
+    d._validator = validator
+    d.scan_batch()
+
+    folders = d.db.get_folders()
+    bad = [f for f in folders if f["os_folder_name"] == "Nonsense"]
+    assert len(bad) == 1
+    assert bad[0]["name_ready"] is False
+    assert bad[0]["item_set_id"] is None
+    # An unparseable folder keeps the whole batch from being ready.
+    assert d.db.get_batch()["ready"] is False
+    d.close()
+
+
 def test_export_csv_writes_catalog(scanned):
     d, _ = scanned
     d.export_csv()
