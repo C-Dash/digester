@@ -173,10 +173,15 @@ class MainWindow(QMainWindow):
         self.console = ConsoleWindow(self)
         right.addWidget(self.console)
 
-        # Right-side panels: media table and thumbnail each get 2/5 height, console gets 1/5.
-        right.setStretchFactor(0, 2)  # media table (2/5)
-        right.setStretchFactor(1, 2)  # thumbnail pane (2/5)
-        right.setStretchFactor(2, 1)  # console (1/5)
+        # Right-side panels: media table and thumbnail each get 2/5 height,
+        # console gets 1/5.  setStretchFactor governs how *extra* space is shared
+        # on resize, but the thumbnail pane is a QScrollArea whose sizeHint is
+        # large, so stretch factors alone let it dominate the initial layout.
+        # setSizes() pins the initial 2:2:1 proportions explicitly.
+        right.setStretchFactor(0, 2)  # media table
+        right.setStretchFactor(1, 2)  # thumbnail pane
+        right.setStretchFactor(2, 1)  # console
+        right.setSizes([280, 280, 140])  # 2 : 2 : 1
 
         # Bidirectional selection sync
         self.media_table.selection_changed.connect(
