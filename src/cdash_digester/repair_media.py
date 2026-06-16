@@ -7,6 +7,8 @@ CDASH Repair Media Module
 
 Issues and Remedies
 - rgba -> convert to rgb
+- la   -> convert grayscale+alpha to 8-bit grayscale
+- i;16 -> convert 16-bit grayscale to 8-bit grayscale
 - iphone_vert -> Rotate based on EXIF orientation; default 90 degrees CCW
 
 """
@@ -139,13 +141,27 @@ def repair_file(
 
     applied = []
 
-    # 1. RGBA -> RGB (must happen before rotation so rotate works on a clean mode)
+    # 1. Mode conversions (must happen before rotation so rotate works on a clean mode)
     if "rgba" in issues:
         if img.mode == "RGBA":
             background = Image.new("RGB", img.size, (255, 255, 255))
             background.paste(img, mask=img.split()[3])
             img = background
             applied.append("rgba->rgb")
+
+    if "la" in issues:
+        if img.mode == "LA":
+            background = Image.new("L", img.size, 255)
+            background.paste(img.convert("L"), mask=img.split()[1])
+            img = background
+            applied.append("la->l")
+
+    if "i;16" in issues:
+        if img.mode == "I;16":
+            # PIL requires an intermediate "I" (32-bit int) step to correctly
+            # scale 16-bit values down to the 0-255 range.
+            img = img.convert("I").convert("L")
+            applied.append("i;16->l")
 
     # 2. iphone_vert -> rotate to landscape orientation
     if "iphone_vert" in issues:

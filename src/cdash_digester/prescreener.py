@@ -244,9 +244,9 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         tag_v2 = getattr(img, "tag_v2", {})
         compression = tag_v2.get(259)   # TIFF tag 259 = Compression
 
-        # 16-bit is non-repairable — return immediately.
-        if img.mode in ("I;16", "F"):
-            props["qa_note"] = "16-bit TIFFs are not accepted"
+        # 32-bit float is non-repairable — return immediately.
+        if img.mode == "F":
+            props["qa_note"] = "32-bit float TIFFs are not accepted"
             return False, props
 
         # Repairable checks — accumulate qa_parts; wrong_compression was already

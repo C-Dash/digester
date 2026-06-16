@@ -214,7 +214,7 @@ class MainWindow(QMainWindow):
 
         # --- Folder ---
         folder_menu = mb.addMenu("Folder")
-        self._act_val_folder = QAction("Validate Selected Folder", self)
+        self._act_val_folder = QAction("Rescan Selected Folder", self)
         self._act_val_folder.triggered.connect(self._validate_selected_folder)
         self._act_val_folder.setEnabled(False)
         folder_menu.addAction(self._act_val_folder)
