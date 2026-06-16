@@ -3,10 +3,10 @@ exif_ex.py  —  Dump all ExifTool tags for an image file.
 
 Usage
 -----
-    python src/utils/exif_ex.py <filepath>
+    python -m cdash_digester.exif_ex <filepath>
 
-Requires ExifTool (https://exiftool.org) on PATH and the pyexiftool package:
-    pip install pyexiftool
+Requires ExifTool (https://exiftool.org) on PATH and the pyexiftool package
+(declared as the PyExifTool dependency).
 """
 
 import argparse

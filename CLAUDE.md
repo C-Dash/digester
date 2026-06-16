@@ -20,9 +20,7 @@ src/
       media_table.py     — Right pane: media file table with status columns
       thumbnail_pane.py  — Thumbnail preview
       console_window.py  — Log output window
-  utils/
-    exif_ex.py           — ExifTool helpers
-  cdash_validator.py     — CLI wrapper for validator
+    exif_ex.py           — CLI: dump all ExifTool tags for a file
 ```
 
 ## Naming Conventions

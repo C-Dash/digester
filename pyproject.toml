@@ -8,10 +8,17 @@ version = "0.1.0"
 description = "CDASH Presort Digester — batch folder validator and media cataloguer"
 requires-python = ">=3.11"
 dependencies = [
-    "PySide6>=6.6",
-    "Pillow>=10.0",
-    "PyMuPDF>=1.23",
-    "requests>=2.31",
+    "PySide6>=6.6,<7",
+    "Pillow>=10.0,<13",
+    "PyMuPDF>=1.23,<2",
+    "requests>=2.31,<3",
+    "PyExifTool>=0.5,<0.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    # "pytest-qt>=4,<5",  # reserved for future GUI-signal tests
 ]
 
 [project.scripts]
@@ -22,3 +29,7 @@ where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
