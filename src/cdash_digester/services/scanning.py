@@ -14,6 +14,7 @@ from ..cdash_objects import (
     DOC_TYPES, ACCEPTED_SUFFIXES,
     parse_batch_name, parse_folder_name, parse_media_name, slugify,
 )
+from .validation import PLACE_FOLDER_MISMATCH_NOTE
 
 
 class ScanService:
@@ -257,6 +258,10 @@ class FolderScanner:
             p_status, p_name = dig._validation.ensure_place(place_id)
             if "Valid" in p_status:
                 place_name = p_name or parsed["place_slug"]
+                if not dig._validation.place_associated_with_folder(
+                        place_id, item_set_id):
+                    notes_parts.insert(0, PLACE_FOLDER_MISMATCH_NOTE)
+                    dig.log(f"    {PLACE_FOLDER_MISMATCH_NOTE}", "warning")
             else:
                 dig.log(f"    Place {place_id}: {p_status}", "error")
                 notes_parts.append(f"Place {place_id}: {p_status}")

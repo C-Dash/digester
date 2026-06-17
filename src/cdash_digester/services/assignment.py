@@ -7,6 +7,7 @@ _current_doc_type, _current_place_info). Logic preserved verbatim.
 from typing import List, Optional, Tuple
 
 from ..cdash_objects import DOC_TYPES, slugify
+from .validation import PLACE_FOLDER_MISMATCH_NOTE
 
 
 class AssignmentService:
@@ -65,6 +66,13 @@ class AssignmentService:
         if not first:
             return False
         item_set_id = first["item_set_id"]
+
+        # Reject an explicitly entered place that isn't associated with this
+        # folder in CDASH (No Change inherits a previously validated place).
+        if not place_no_change and not dig._validation.place_associated_with_folder(
+                place_id, item_set_id):
+            dig.log(PLACE_FOLDER_MISMATCH_NOTE, "error")
+            return False
 
         folder_row = dig.db.get_folder_by_item_set(item_set_id)
         batch_folder_id = (folder_row.get("batch_folder_id") or "") if folder_row else ""

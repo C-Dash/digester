@@ -109,7 +109,7 @@ Handles the database connection and executes all queries and commits.
 
 **Methods:** validate place ID (calls `CDASHValidator`); cache API result; getters/setters.
 
-> **Note (future feature):** `item_set_ids` enables a cross-reference check — if the parent folder's `item_set_id` is not in `item_set_ids`, a warning should be logged. This check is deferred.
+> **Note:** `item_set_ids` drives a cross-reference check — during scan and interactive assignment, if the parent folder's `item_set_id` is not among a place's `item_set_ids`, the media file is marked not-ready with the note "Place_ID is not associated with this folder in CDASH." (An empty/None `item_set_ids` skips the check.)
 
 #### `cdash_doc` table
 
@@ -607,7 +607,6 @@ pip install -e .
 
 ## 11. Known Limitations / Future Work
 
-- **`item_set_ids` cross-reference check** — the API returns which Item Sets a Place belongs to (`o:item_set`). A future scan step should warn when the parent folder's `item_set_id` is not in the place's `item_set_ids`.
 - **Commit Changes menu item** — consolidates page numbers across all documents in a folder (closing gaps from un-grouping) and renames files to match DB state. Specified but not yet implemented.
 - **`media_rejects` repair tools** — restore a rejected file after fixing the format issue. Deferred.
 - **macOS / Linux support** — architecture does not preclude this; path handling uses `pathlib.Path` throughout.

@@ -9,6 +9,8 @@ from typing import Optional, Tuple
 
 from ..cdash_objects import PLACE_PROP_KEYS
 
+PLACE_FOLDER_MISMATCH_NOTE = "Place_ID is not associated with this folder in CDASH."
+
 
 class ValidationService:
     def __init__(self, dig):
@@ -77,3 +79,18 @@ class ValidationService:
             dig.db.upsert_place(place_item_id=place_id, **props)
             return status, place_name
         return status, ""
+
+    def place_associated_with_folder(self, place_id: int,
+                                     item_set_id: int) -> bool:
+        """True if the place lists this folder's item_set_id (or lists none).
+
+        Empty/None item_set_ids → True (skip the check). Only returns False when
+        item_set_ids has entries and this folder's id is not among them. Relies
+        on ensure_place having already populated the working cdash_place row.
+        """
+        place = self._dig.db.get_place(place_id) if self._dig.db else None
+        raw = (place.get("item_set_ids") or "").strip() if place else ""
+        if not raw:
+            return True
+        ids = {part.strip() for part in raw.split(",") if part.strip()}
+        return str(item_set_id) in ids

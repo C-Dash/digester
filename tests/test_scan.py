@@ -102,6 +102,76 @@ def test_unparseable_folder_registered_not_ready(make_batch):
     d.close()
 
 
+# ----------------------------------------- place ↔ folder association check
+
+from cdash_digester.services.validation import PLACE_FOLDER_MISMATCH_NOTE
+
+
+def test_place_associated_with_folder_helper(scanned):
+    d, _ = scanned
+    d.db.upsert_place(place_item_id=70, place_name="P", item_set_ids="101, 202")
+    assoc = d._validation.place_associated_with_folder
+    assert assoc(70, 101) is True
+    assert assoc(70, 202) is True
+    assert assoc(70, 303) is False
+    # Empty / None item_set_ids → skip the check (treated as associated).
+    d.db.upsert_place(place_item_id=71, place_name="Q", item_set_ids=None)
+    d.db.upsert_place(place_item_id=72, place_name="R", item_set_ids="")
+    assert assoc(71, 999) is True
+    assert assoc(72, 999) is True
+
+
+def _scan_one_file_with_item_sets(make_batch, item_set_ids):
+    """Scan a folder OF101 holding one media file whose place (55) has the
+    given item_set_ids. Returns the registered media row."""
+    root = make_batch("CDB260430-Test_batch")
+    folder = root / "media" / "F1-Main-OF101"
+    folder.mkdir(parents=True)
+    _media(folder, "Main", 1, 1, "VE", 55)
+    validator = FakeValidator(
+        folders={101: "Main St Folder"},
+        places={55: place_props("Main Place", item_set_ids=item_set_ids)},
+    )
+    d = Digester(root, log=lambda *a, **k: None)
+    d.load_or_initialize()
+    d._validator = validator
+    d.scan_batch()
+    rows = d.db.get_media_for_folder(101)
+    d.close()
+    return rows
+
+
+def test_scan_flags_place_not_associated_with_folder(make_batch):
+    rows = _scan_one_file_with_item_sets(make_batch, item_set_ids="999")
+    assert len(rows) == 1
+    assert rows[0]["ready"] is False
+    assert rows[0]["notes"].startswith(PLACE_FOLDER_MISMATCH_NOTE)
+
+
+def test_scan_accepts_place_associated_with_folder(make_batch):
+    rows = _scan_one_file_with_item_sets(make_batch, item_set_ids="101")
+    assert len(rows) == 1
+    assert rows[0]["ready"] is True
+    assert PLACE_FOLDER_MISMATCH_NOTE not in (rows[0]["notes"] or "")
+
+
+def test_assign_rejects_place_not_associated(scanned):
+    d, _ = scanned
+    media_ids = [m["media_id"] for m in d.db.get_media_for_folder(101)]
+    # Place 60 exists in CDASH but is associated with a different folder.
+    d._validator.places[60] = place_props("Other", item_set_ids="999")
+    ok = d.assign_media_to_doc(media_ids, 60, "VE", True)
+    assert ok is False
+
+
+def test_assign_accepts_place_associated(scanned):
+    d, _ = scanned
+    media_ids = [m["media_id"] for m in d.db.get_media_for_folder(101)]
+    d._validator.places[61] = place_props("Here", item_set_ids="101")
+    ok = d.assign_media_to_doc(media_ids, 61, "VE", True)
+    assert ok is True
+
+
 def test_export_csv_writes_catalog(scanned):
     d, _ = scanned
     d.export_csv()
