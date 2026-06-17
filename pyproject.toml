@@ -18,7 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8,<9",
-    # "pytest-qt>=4,<5",  # reserved for future GUI-signal tests
+    "pytest-qt>=4,<5",  # GUI signal/widget tests (headless via QT_QPA_PLATFORM)
 ]
 
 [project.scripts]

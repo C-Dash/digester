@@ -8,7 +8,13 @@ These tests are deterministic and network-free:
 
 ExifTool is NOT required: prescreener._get_exiftool_tags swallows failures and
 returns {}, so capture dates simply fall back to the filesystem.
+
+GUI tests run headless: QT_QPA_PLATFORM=offscreen is set here, before any Qt
+import, so pytest-qt's qtbot never opens a real window.
 """
+
+import os
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from pathlib import Path
 
