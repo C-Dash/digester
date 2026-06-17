@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
     QFrame, QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
 )
 
+from .status_colors import status_color as _border_color
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -35,13 +37,6 @@ _THUMB = 200       # bounding box in px
 _BORDER = 3
 _SEL_BORDER = 6
 _LABEL_H = 32      # height reserved for filename text
-
-def _border_color(ready) -> str:
-    if ready is True:
-        return "#2d8a2d"   # green
-    if ready is False:
-        return "#cc0000"   # red
-    return "#888888"       # grey / pending
 
 
 # ---------------------------------------------------------------------------

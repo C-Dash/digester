@@ -147,9 +147,35 @@ class Digester:
         """Repair selected media files that have recorded repair issues."""
         self._repair.repair_media_files(media_ids)
 
+    def repairable_media_ids(self, media_ids: List[int]) -> List[int]:
+        """Subset of media_ids that have recorded repair issues."""
+        return self._repair.repairable_media_ids(media_ids)
+
     def export_csv(self):
         """Export batch.csv, folder.csv, place.csv, document.csv, media.csv."""
         self._export.export_csv()
+
+    # ----------------------------------------------------------- queries (GUI)
+
+    @property
+    def is_open(self) -> bool:
+        """True once a batch DB is open (after load_or_initialize)."""
+        return self.db is not None
+
+    def get_batch(self):
+        return self.db.get_batch() if self.db else None
+
+    def get_folders(self) -> list:
+        return self.db.get_folders() if self.db else []
+
+    def get_folder(self, item_set_id: int):
+        return self.db.get_folder_by_item_set(item_set_id) if self.db else None
+
+    def get_media(self, media_id: int):
+        return self.db.get_media(media_id) if self.db else None
+
+    def get_media_for_folder(self, item_set_id: int) -> list:
+        return self.db.get_media_for_folder(item_set_id) if self.db else []
 
     # --------------------------------------------------------------- counts
 

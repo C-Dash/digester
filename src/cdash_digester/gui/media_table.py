@@ -14,17 +14,15 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QAbstractItemView, QTableView, QWidget
 
+from .status_colors import row_background
+
 _COLUMNS  = ["filename", "doc_type_code", "page_num", "repair_issues", "ready", "notes"]
 _HEADERS  = ["Filename",  "Type",          "Page",    "Repair Issues", "Status", "Notes"]
 
 _READY_DISPLAY = {True: "Ready", False: "Not Ready", None: "—"}
 
 def _row_color(ready) -> QColor:
-    if ready is True:
-        return QColor("#e8f5e9")
-    if ready is False:
-        return QColor("#ffebee")
-    return QColor("#f5f5f5")
+    return QColor(row_background(ready))
 
 
 class _MediaModel(QAbstractTableModel):

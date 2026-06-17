@@ -10,12 +10,11 @@ from PySide6.QtCore import Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QWidget
 
+from .status_colors import folder_color
+
+
 def _folder_color(name_ready: bool, media_ready: bool) -> QColor:
-    if name_ready and media_ready:
-        return QColor("#2d8a2d")   # green — fully ready
-    if name_ready is False or media_ready is False:
-        return QColor("#cc0000")   # red — not ready
-    return QColor("#888888")       # grey — pending / unseen
+    return QColor(folder_color(name_ready, media_ready))
 
 
 class FolderPane(QTreeWidget):

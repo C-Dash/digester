@@ -258,14 +258,14 @@ class MainWindow(QMainWindow):
         self.console.append_message(f"Selected: {folder}", "info")
         self.digester = Digester(self.batch_root, self.console.append_message)
         self.digester.load_or_initialize()
-        if not self.digester.db:
+        if not self.digester.is_open:
             return                          # invalid batch — errors already logged
         self._after_load()
         self.console.append_message("Scanning batch…", "info")
         self._run("scan_batch", on_finish=self._reload_folders)
 
     def _after_load(self):
-        if not self.digester or not self.digester.db:
+        if not self.digester or not self.digester.is_open:
             self.console.append_message(
                 "Batch load failed — check that the folder contains a "
                 "'Media/' subfolder with item set folders named "
@@ -275,7 +275,7 @@ class MainWindow(QMainWindow):
             return
         # batch_path may have been renamed during init
         self.batch_root = self.digester.batch_path
-        batch = self.digester.db.get_batch()
+        batch = self.digester.get_batch()
         if batch:
             self.setWindowTitle(
                 f"CDASH Presort Digester — {batch['batch_id']}"
@@ -315,14 +315,12 @@ class MainWindow(QMainWindow):
         self._current_item_set_id = item_set_id
         if not self.digester:
             return
-        if not self.digester.db:
+        if not self.digester.is_open:
             self.digester.reopen_db()
-        if not self.digester.db:
+        if not self.digester.is_open:
             return
-        self.folder_info.show_folder(
-            self.digester.db.get_folder_by_item_set(item_set_id)
-        )
-        rows = self.digester.db.get_media_for_folder(item_set_id)
+        self.folder_info.show_folder(self.digester.get_folder(item_set_id))
+        rows = self.digester.get_media_for_folder(item_set_id)
         self.media_table.load_media(rows)
         self.thumbnail_pane.load_media(rows, self.batch_root)
 
@@ -369,7 +367,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _repair_selected_media(self):
-        if not self.digester or not self.digester.db:
+        if not self.digester or not self.digester.is_open:
             return
 
         media_ids = self.media_table.selected_media_ids()
@@ -381,14 +379,8 @@ class MainWindow(QMainWindow):
             )
             return
 
-        repairable_ids = []
-        skipped = 0
-        for media_id in media_ids:
-            row = self.digester.db.get_media(media_id)
-            if row and (row.get("repair_issues") or "").strip():
-                repairable_ids.append(media_id)
-            else:
-                skipped += 1
+        repairable_ids = self.digester.repairable_media_ids(media_ids)
+        skipped = len(media_ids) - len(repairable_ids)
 
         if not repairable_ids:
             QMessageBox.information(
@@ -415,8 +407,8 @@ class MainWindow(QMainWindow):
     def _reload_folders(self):
         if self.digester:
             self.digester.reopen_db()
-        if self.digester and self.digester.db:
-            folders = self.digester.db.get_folders()
+        if self.digester and self.digester.is_open:
+            folders = self.digester.get_folders()
             self.console.append_message(
                 f"Loading {len(folders)} folder(s) into pane.", "info"
             )

@@ -12,6 +12,19 @@ class RepairService:
     def __init__(self, dig):
         self._dig = dig
 
+    def repairable_media_ids(self, media_ids: List[int]) -> List[int]:
+        """Return the subset of media_ids that have recorded repair issues,
+        using the canonical parse_repair_issues check."""
+        db = self._dig.db
+        if not db:
+            return []
+        out = []
+        for media_id in media_ids:
+            row = db.get_media(media_id)
+            if row and parse_repair_issues(row.get("repair_issues")):
+                out.append(media_id)
+        return out
+
     def repair_media_files(self, media_ids: List[int]):
         """Repair selected media files that have recorded repair issues.
 
