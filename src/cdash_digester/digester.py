@@ -246,11 +246,6 @@ class Digester:
 
     # ------------------------------------------------------------------ misc
 
-    def reopen_db(self):
-        """No-op — kept for API compatibility. check_same_thread=False is set
-        on the connection so the DB is usable from any thread sequentially."""
-        pass
-
     def close(self):
         self._validator.close()
         if self.db:

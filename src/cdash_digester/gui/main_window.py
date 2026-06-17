@@ -35,7 +35,23 @@ from .thumbnail_pane import ThumbnailPane
 # ---------------------------------------------------------------------------
 
 class _Worker(QThread):
-    """Runs one digester operation off the main thread."""
+    """Runs one digester operation off the main thread.
+
+    Threading model
+    ---------------
+    The Digester holds a single SQLite connection shared between this worker
+    thread and the GUI main thread (the connection is opened with
+    ``check_same_thread=False``).  Safety depends on that connection never
+    being touched concurrently from both threads.  This is enforced by the
+    main window, not by a lock in the persistence layer:
+
+      * Long-running operations run here, on the worker thread.
+      * Main-thread DB reads (folder clicks) and the synchronous Assign/Repair
+        handlers run only when the window is idle.
+      * ``MainWindow._run`` gates the UI busy (``_set_busy``) for the lifetime
+        of a worker, so the main thread cannot issue a query or start another
+        operation until ``done`` fires.  The two therefore never overlap.
+    """
 
     log_message = Signal(str, str)   # (message, level)
     done        = Signal()           # avoid shadowing QThread.finished
@@ -313,11 +329,7 @@ class MainWindow(QMainWindow):
     @Slot(int)
     def _on_folder_selected(self, item_set_id: int):
         self._current_item_set_id = item_set_id
-        if not self.digester:
-            return
-        if not self.digester.is_open:
-            self.digester.reopen_db()
-        if not self.digester.is_open:
+        if not self.digester or not self.digester.is_open:
             return
         self.folder_info.show_folder(self.digester.get_folder(item_set_id))
         rows = self.digester.get_media_for_folder(item_set_id)
@@ -405,8 +417,6 @@ class MainWindow(QMainWindow):
     # --------------------------------------------------------------- helpers
 
     def _reload_folders(self):
-        if self.digester:
-            self.digester.reopen_db()
         if self.digester and self.digester.is_open:
             folders = self.digester.get_folders()
             self.console.append_message(
@@ -422,8 +432,27 @@ class MainWindow(QMainWindow):
         if self._current_item_set_id is not None:
             self._on_folder_selected(self._current_item_set_id)
 
+    def _set_busy(self, busy: bool):
+        """Enable/disable all DB-touching UI while a worker runs.
+
+        This serializes access to the single shared SQLite connection: while a
+        worker is busy the folder pane and the DB-touching menu actions are
+        disabled, so the main thread cannot issue a query (folder click) or
+        start a synchronous Assign/Repair op that would race the worker.
+        See ``_Worker`` for the full threading model.
+        """
+        self.folder_pane.setEnabled(not busy)
+        for act in (self._act_choose, self._act_init, self._act_csv,
+                    self._act_status, self._act_val_folder, self._act_assign,
+                    self._act_repair):
+            act.setEnabled(not busy)
+
     def _run(self, operation: str, on_finish=None, **kwargs):
-        """Dispatch a digester operation to a background thread."""
+        """Dispatch a digester operation to a background thread.
+
+        The UI is gated busy for the worker's lifetime (see ``_Worker``) so no
+        main-thread DB access can overlap the worker on the shared connection.
+        """
         if self._worker and self._worker.isRunning():
             self.console.append_message(
                 "An operation is already running — please wait.", "warning"
@@ -436,6 +465,11 @@ class MainWindow(QMainWindow):
         )
         if on_finish:
             self._worker.done.connect(on_finish)
+        # Re-enable the UI when the worker finishes.  Connected after on_finish
+        # so the refresh handler (which reads the DB) runs while still "busy",
+        # then the gate lifts.
+        self._worker.done.connect(lambda: self._set_busy(False))
+        self._set_busy(True)
         self._worker.start()
 
 
