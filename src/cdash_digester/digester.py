@@ -129,6 +129,19 @@ class Digester:
         """Full batch scan: rebuild working tables, scan all folders and media."""
         self._scan.scan_batch()
 
+    def purge_caches(self):
+        """Empty the three persistent validation/screening caches.
+
+        The next scan/rescan re-fetches Omeka folder/place data and re-screens
+        all files instead of short-circuiting from cache.
+        """
+        if not self.db:
+            self.log("No batch open.", "error")
+            return
+        n = self.db.clear_caches()
+        self.log(f"Purged {n} cached validation/screening entr"
+                 f"{'y' if n == 1 else 'ies'}.", "info")
+
     def validate_folder(self, item_set_id: int):
         """Re-scan a single folder (Folder → Rescan Selected Folder)."""
         self._scan.rescan_folder(item_set_id)

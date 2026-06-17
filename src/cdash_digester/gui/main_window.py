@@ -83,6 +83,8 @@ class _Worker(QThread):
                 )
             elif op == "repair_media":
                 self.digester.repair_media_files(self.kwargs["media_ids"])
+            elif op == "purge_caches":
+                self.digester.purge_caches()
         except Exception as exc:
             self.error.emit(str(exc))
         finally:
@@ -227,7 +229,7 @@ class MainWindow(QMainWindow):
         self._act_choose.triggered.connect(self._choose_batch_folder)
         batch.addAction(self._act_choose)
 
-        self._act_init = QAction("Initialize / Validate Batch", self)
+        self._act_init = QAction("Re-Scan Batch", self)
         self._act_init.triggered.connect(self._initialize_batch)
         self._act_init.setEnabled(False)
         batch.addAction(self._act_init)
@@ -241,6 +243,11 @@ class MainWindow(QMainWindow):
         self._act_status.triggered.connect(self._write_status)
         self._act_status.setEnabled(False)
         batch.addAction(self._act_status)
+
+        self._act_purge_cache = QAction("Purge Validation Caches", self)
+        self._act_purge_cache.triggered.connect(self._purge_caches)
+        self._act_purge_cache.setEnabled(False)
+        batch.addAction(self._act_purge_cache)
 
         # --- Folder ---
         folder_menu = mb.addMenu("Folder")
@@ -300,7 +307,8 @@ class MainWindow(QMainWindow):
             self.console.set_log_path(log_path)
         self._reload_folders()
         for act in (self._act_init, self._act_csv, self._act_status,
-                    self._act_val_folder, self._act_assign, self._act_repair):
+                    self._act_purge_cache, self._act_val_folder,
+                    self._act_assign, self._act_repair):
             act.setEnabled(True)
 
     @Slot()
@@ -317,6 +325,22 @@ class MainWindow(QMainWindow):
     def _write_status(self):
         if self.digester:
             self._run("status_summary")
+
+    @Slot()
+    def _purge_caches(self):
+        if not self.digester or not self.digester.is_open:
+            return
+        resp = QMessageBox.question(
+            self, "Purge Validation Caches",
+            "Clear the folder, place, and file validation caches?\n\n"
+            "The next scan will be slower — it re-fetches Omeka folder/place "
+            "data and re-screens all files.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if resp != QMessageBox.Yes:
+            return
+        self.console.append_message("Purging validation caches…", "info")
+        self._run("purge_caches")
 
     @Slot()
     def _validate_selected_folder(self):
@@ -443,8 +467,8 @@ class MainWindow(QMainWindow):
         """
         self.folder_pane.setEnabled(not busy)
         for act in (self._act_choose, self._act_init, self._act_csv,
-                    self._act_status, self._act_val_folder, self._act_assign,
-                    self._act_repair):
+                    self._act_status, self._act_purge_cache,
+                    self._act_val_folder, self._act_assign, self._act_repair):
             act.setEnabled(not busy)
 
     def _run(self, operation: str, on_finish=None, **kwargs):

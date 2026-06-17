@@ -164,6 +164,9 @@ class BatchDB:
     def clear_working_tables(self):
         self._db.clear_working_tables()
 
+    def clear_caches(self):
+        return self._db.clear_caches()
+
     def close(self):
         self._db.close()
 

@@ -14,6 +14,10 @@ _BOOL_COLS = {"ready", "name_ready", "media_ready", "accepted"}
 # Per-scan working tables (cleared on a full rescan); caches/batch are preserved.
 _WORKING_TABLES = ("cdash_media", "cdash_doc", "cdash_place", "cdash_folder")
 
+# Persistent caches (validator + prescreener results); survive a working-table
+# clear but can be purged on demand to force re-fetch/re-screen.
+_CACHE_TABLES = ("cdash_folder_cache", "cdash_place_cache", "cdash_file_cache")
+
 _SCHEMA = [
     # ------ batch
     """CREATE TABLE IF NOT EXISTS cdash_batch (
@@ -189,6 +193,14 @@ class Database:
         for t in _WORKING_TABLES:
             self.con.execute(f"DELETE FROM {t}")
         self.con.commit()
+
+    def clear_caches(self) -> int:
+        """Delete all rows from the persistent cache tables. Returns rows removed."""
+        total = 0
+        for t in _CACHE_TABLES:
+            total += self.con.execute(f"DELETE FROM {t}").rowcount
+        self.con.commit()
+        return total
 
     def close(self):
         self.con.close()

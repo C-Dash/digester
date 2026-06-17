@@ -73,6 +73,28 @@ def test_clear_working_tables_preserves_caches(db):
     assert db.get_file_cache("media/a.tif")["accepted"] is True
 
 
+# --------------------------------------------------------------- clear_caches
+
+def test_clear_caches_empties_caches_only(db):
+    db.upsert_batch("CDB1", "n", "/p", "2026-01-01")
+    db.upsert_folder(item_set_id=101, cdash_folder_name="Main",
+                     os_folder_name="F1-Main-OF101")
+    db.upsert_folder_cache(101, "Main", 1, "valid")
+    db.upsert_place_cache(55, place_props("X"), "valid")
+    db.upsert_file_cache("media/a.tif", 10, 20, True, {"qa_note": "OK"})
+
+    removed = db.clear_caches()
+
+    assert removed == 3
+    # All three caches emptied...
+    assert db.get_folder_cache(101) is None
+    assert db.get_place_cache(55) is None
+    assert db.get_file_cache("media/a.tif") is None
+    # ...but batch and working tables survive.
+    assert db.get_batch() is not None
+    assert db.get_folder_by_item_set(101) is not None
+
+
 # ----------------------------------------------------------- folder cache
 
 def test_folder_cache_max_index(db):

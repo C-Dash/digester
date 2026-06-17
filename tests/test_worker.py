@@ -12,7 +12,8 @@ from cdash_digester.gui.main_window import MainWindow
 # The DB-touching actions that _set_busy gates, alongside the folder pane.
 def _gated_actions(win):
     return [win._act_choose, win._act_init, win._act_csv, win._act_status,
-            win._act_val_folder, win._act_assign, win._act_repair]
+            win._act_purge_cache, win._act_val_folder, win._act_assign,
+            win._act_repair]
 
 
 def test_set_busy_toggles_db_touching_ui(qtbot):
