@@ -189,4 +189,49 @@ def test_folder_pane_emits_selection(qtbot):
     item = pane.topLevelItem(0)
     with qtbot.waitSignal(pane.folder_selected, timeout=1000) as blocker:
         pane._on_clicked(item, 0)
-    assert blocker.args == [101]
+    assert blocker.args[0]["item_set_id"] == 101
+
+
+def test_folder_pane_emits_for_unparseable_folder(qtbot):
+    pane = FolderPane()
+    qtbot.addWidget(pane)
+    pane.load_folders([
+        Folder.from_row({"os_folder_name": "Nonsense", "item_set_id": None,
+                         "name_ready": False, "media_ready": False,
+                         "notes": "Folder name not in CDASH format"}),
+    ])
+    item = pane.topLevelItem(0)
+    with qtbot.waitSignal(pane.folder_selected, timeout=1000) as blocker:
+        pane._on_clicked(item, 0)
+    row = blocker.args[0]
+    assert row["item_set_id"] is None
+    assert row["notes"] == "Folder name not in CDASH format"
+
+
+def test_folder_info_pane_shows_unparseable_folder(qtbot):
+    pane = FolderInfoPane()
+    qtbot.addWidget(pane)
+    pane.show_folder(Folder.from_row({
+        "cdash_folder_name": None, "os_folder_name": "Nonsense",
+        "item_set_id": None, "name_ready": False, "media_ready": False,
+        "notes": "Folder name not in CDASH format",
+    }))
+    assert "Nonsense" in pane._name.text()
+    assert pane._name_status.text() == "NO"
+    assert pane._note.text() == "Folder name not in CDASH format"
+
+
+def test_folder_pane_select_folder_by_key(qtbot):
+    from cdash_digester.gui.folder_pane import folder_key
+    pane = FolderPane()
+    qtbot.addWidget(pane)
+    normal = Folder.from_row({"os_folder_name": "F1-Main-OF101", "item_set_id": 101,
+                              "name_ready": True, "media_ready": True})
+    bad = Folder.from_row({"os_folder_name": "Nonsense", "item_set_id": None,
+                           "name_ready": False, "media_ready": False})
+    pane.load_folders([normal, bad])
+
+    pane.select_folder(folder_key(normal))
+    assert pane.current_row()["item_set_id"] == 101
+    pane.select_folder(folder_key(bad))
+    assert pane.current_row()["os_folder_name"] == "Nonsense"

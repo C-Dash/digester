@@ -25,7 +25,7 @@ from ..cdash_objects import DOC_TYPES
 from ..digester import Digester
 from .console_window import ConsoleWindow
 from .folder_info_pane import FolderInfoPane
-from .folder_pane import FolderPane
+from .folder_pane import FolderPane, folder_key
 from .media_table import MediaTablePane
 from .thumbnail_pane import ThumbnailPane
 
@@ -165,7 +165,7 @@ class MainWindow(QMainWindow):
 
         self.digester:  Optional[Digester] = None
         self.batch_root: Optional[Path]    = None
-        self._current_item_set_id: Optional[int] = None
+        self._current_folder = None   # currently selected folder row
         self._worker: Optional[_Worker] = None
 
         self._build_ui()
@@ -348,19 +348,28 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _validate_selected_folder(self):
-        if self._current_item_set_id is None:
+        if not self._current_folder:
+            return
+        item_set_id = self._current_folder["item_set_id"]
+        if item_set_id is None:
+            self.console.append_message(
+                "Cannot rescan a folder whose name is not in CDASH format.",
+                "warning",
+            )
             return
         self._run("validate_folder",
-                  item_set_id=self._current_item_set_id,
+                  item_set_id=item_set_id,
                   on_finish=self._reload_after_folder_scan)
 
-    @Slot(int)
-    def _on_folder_selected(self, item_set_id: int):
-        self._current_item_set_id = item_set_id
+    @Slot(object)
+    def _on_folder_selected(self, folder):
+        self._current_folder = folder
         if not self.digester or not self.digester.is_open:
             return
-        self.folder_info.show_folder(self.digester.get_folder(item_set_id))
-        rows = self.digester.get_media_for_folder(item_set_id)
+        self.folder_info.show_folder(folder)
+        item_set_id = folder["item_set_id"]
+        rows = (self.digester.get_media_for_folder(item_set_id)
+                if item_set_id is not None else [])
         self.media_table.load_media(rows)
         self.thumbnail_pane.load_media(rows, self.batch_root)
 
@@ -451,14 +460,15 @@ class MainWindow(QMainWindow):
                 f"Loading {len(folders)} folder(s) into pane.", "info"
             )
             self.folder_pane.load_folders(folders)
-            if self._current_item_set_id is not None:
-                self.folder_pane.select_folder(self._current_item_set_id)
+            if self._current_folder is not None:
+                self.folder_pane.select_folder(folder_key(self._current_folder))
 
     def _reload_after_folder_scan(self):
         """Refresh folder pane then re-populate media/thumbnail for selected folder."""
         self._reload_folders()
-        if self._current_item_set_id is not None:
-            self._on_folder_selected(self._current_item_set_id)
+        row = self.folder_pane.current_row()
+        if row is not None:
+            self._on_folder_selected(row)
 
     def _set_busy(self, busy: bool):
         """Enable/disable all DB-touching UI while a worker runs.
