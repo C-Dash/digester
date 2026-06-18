@@ -129,7 +129,8 @@ class AssignmentService:
                                                batch_media_id)
                     self._rename_media(media_id, place_id, place_slug,
                                        next_seq, page_num, doc_type_code)
-                    dig.db.set_media_status(media_id, True)
+                    # Assignment updates metadata only; the file's ready status
+                    # and notes (e.g. format/repair issues) are left as-is.
                 dig.db.renumber_doc_pages(doc_id)
             else:
                 for page_num, media_id in enumerate(sorted(media_ids), start=1):
@@ -175,7 +176,8 @@ class AssignmentService:
                     dig.db.assign_media_to_doc(media_id, doc_id, 1, batch_media_id)
                     self._rename_media(media_id, eff_place_id, eff_slug,
                                        next_seq, 1, effective_type)
-                    dig.db.set_media_status(media_id, True)
+                    # Assignment updates metadata only; ready status and notes
+                    # are left as-is.
                     dig.db.renumber_doc_pages(doc_id)
                     next_seq += 1
 

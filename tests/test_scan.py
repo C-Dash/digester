@@ -172,6 +172,21 @@ def test_assign_accepts_place_associated(scanned):
     assert ok is True
 
 
+def test_assign_preserves_media_status_and_notes(scanned):
+    d, _ = scanned
+    mid = d.db.get_media_for_folder(101)[0]["media_id"]
+    # Simulate a format-rejected file: not ready, with a format note.
+    d.db.set_media_status(mid, False, "Format rejected: something")
+    d._validator.places[61] = place_props("Here", item_set_ids="101")
+
+    assert d.assign_media_to_doc([mid], 61, "VE", True) is True
+
+    row = d.db.get_media(mid)
+    assert row["ready"] is False                          # status untouched
+    assert row["notes"] == "Format rejected: something"   # notes untouched
+    assert row["doc_item_id"] is not None                 # but metadata applied
+
+
 def test_export_csv_writes_catalog(scanned):
     d, _ = scanned
     d.export_csv()
