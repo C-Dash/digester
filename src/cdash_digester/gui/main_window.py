@@ -567,7 +567,8 @@ def main():
     # ExifTool (bundled alongside the executable) is found on PATH.
     if getattr(sys, "frozen", False):
         import os
-        _bundle_dir = str(Path(sys.executable).parent)
+        # sys._MEIPASS is the _internal/ folder where bundled binaries land.
+        _bundle_dir = getattr(sys, "_MEIPASS", str(Path(sys.executable).parent))
         os.environ["PATH"] = _bundle_dir + os.pathsep + os.environ.get("PATH", "")
 
     QLoggingCategory.setFilterRules("qt.gui.imageio=false")
