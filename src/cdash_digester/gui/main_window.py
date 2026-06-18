@@ -13,14 +13,15 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from PySide6.QtCore import QLoggingCategory, QThread, Signal, Slot, Qt
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QLoggingCategory, QThread, QUrl, Signal, Slot, Qt
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
     QRadioButton, QSplitter, QVBoxLayout, QWidget,
 )
 
+from .. import __build_date__, __version__
 from ..cdash_objects import DOC_TYPES
 from ..digester import Digester
 from .console_window import ConsoleWindow
@@ -153,6 +154,25 @@ class _AssignDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# About dialog
+# ---------------------------------------------------------------------------
+
+class _AboutDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("About CDASH Presort Digester")
+        self.setMinimumWidth(300)
+        layout = QVBoxLayout(self)
+        title = QLabel("<b>CDASH Presort Digester</b>")
+        layout.addWidget(title)
+        layout.addWidget(QLabel(f"Version: {__version__}"))
+        layout.addWidget(QLabel(f"Build date: {__build_date__}"))
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
@@ -272,7 +292,34 @@ class MainWindow(QMainWindow):
         self._act_repair.setEnabled(False)
         media_menu.addAction(self._act_repair)
 
+        # --- Digester ---
+        digester_menu = mb.addMenu("Digester")
+
+        act_help = QAction("Help", self)
+        act_help.triggered.connect(
+            lambda: QDesktopServices.openUrl(
+                QUrl("https://c-dash.github.io/Documentation/home/")
+            )
+        )
+        digester_menu.addAction(act_help)
+
+        act_github = QAction("GitHub", self)
+        act_github.triggered.connect(
+            lambda: QDesktopServices.openUrl(
+                QUrl("https://github.com/C-Dash/digester")
+            )
+        )
+        digester_menu.addAction(act_github)
+
+        act_about = QAction("About…", self)
+        act_about.triggered.connect(self._show_about)
+        digester_menu.addAction(act_about)
+
     # ---------------------------------------------------------------- slots
+
+    @Slot()
+    def _show_about(self):
+        _AboutDialog(self).exec()
 
     @Slot()
     def _choose_batch_folder(self):

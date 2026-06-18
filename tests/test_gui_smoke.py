@@ -5,18 +5,27 @@ starting point for the Phase 5 threading work, where worker/signal tests will be
 added on top of this same qtbot setup.
 """
 
+from cdash_digester import __build_date__, __version__
 from cdash_digester.models import Folder
 from cdash_digester.gui.folder_info_pane import FolderInfoPane
 from cdash_digester.gui.folder_pane import FolderPane
 from cdash_digester.gui.media_table import MediaTablePane
 from cdash_digester.gui.thumbnail_pane import ThumbnailPane
-from cdash_digester.gui.main_window import _AssignDialog
+from cdash_digester.gui.main_window import _AboutDialog, _AssignDialog
 
 from PySide6.QtWidgets import QLabel
 
 
 def _dialog_labels(dlg):
     return [w.text() for w in dlg.findChildren(QLabel)]
+
+
+def test_about_dialog_shows_version_and_build_date(qtbot):
+    dlg = _AboutDialog()
+    qtbot.addWidget(dlg)
+    texts = [w.text() for w in dlg.findChildren(QLabel)]
+    assert any(__version__ in t for t in texts)
+    assert any(__build_date__ in t for t in texts)
 
 
 def test_assign_dialog_shows_selected_count(qtbot):
