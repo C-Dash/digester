@@ -99,12 +99,16 @@ class _Worker(QThread):
 class _AssignDialog(QDialog):
     """Collect place ID, document type, and page-grouping choice."""
 
-    def __init__(self, parent=None):
+    def __init__(self, count: int, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Assign Metadata")
         self.setMinimumWidth(380)
 
         layout = QFormLayout(self)
+
+        header = QLabel(f"{count} media file{'s' if count != 1 else ''} selected")
+        header.setStyleSheet("font-weight: bold;")
+        layout.addRow(header)
 
         self._place_edit = QLineEdit()
         self._place_edit.setPlaceholderText("No Change")
@@ -367,7 +371,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Selection",
                                     "Select one or more media files first.")
             return
-        dlg = _AssignDialog(self)
+        dlg = _AssignDialog(len(media_ids), self)
         if dlg.exec() != QDialog.Accepted:
             return
 

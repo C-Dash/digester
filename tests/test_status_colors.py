@@ -13,7 +13,7 @@ def test_status_color_tristate():
 
 def test_row_background_tristate():
     assert row_background(True) == "#e8f5e9"
-    assert row_background(False) == "#ffebee"
+    assert row_background(False) == "#fdedef"
     assert row_background(None) == "#f5f5f5"
 
 

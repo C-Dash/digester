@@ -10,19 +10,19 @@ without re-emitting the signal (avoids feedback loops).
 
 from typing import List
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
+from PySide6.QtCore import (
+    QAbstractTableModel, QItemSelection, QItemSelectionModel, QModelIndex,
+    Qt, Signal,
+)
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QAbstractItemView, QTableView, QWidget
 
-from .status_colors import row_background
+from .status_colors import status_color
 
-_COLUMNS  = ["filename", "doc_type_code", "page_num", "repair_issues", "ready", "notes"]
-_HEADERS  = ["Filename",  "Type",          "Page",    "Repair Issues", "Status", "Notes"]
+_COLUMNS  = ["filename", "ready",  "doc_type_code", "page_num", "repair_issues", "notes"]
+_HEADERS  = ["Filename",  "Status", "Type",          "Page",    "Repair Issues", "Notes"]
 
 _READY_DISPLAY = {True: "Ready", False: "Not Ready", None: "—"}
-
-def _row_color(ready) -> QColor:
-    return QColor(row_background(ready))
 
 
 class _MediaModel(QAbstractTableModel):
@@ -31,9 +31,12 @@ class _MediaModel(QAbstractTableModel):
         self._rows: List[dict] = []
 
     def load(self, rows):
-        self.layoutAboutToBeChanged.emit()
+        # A wholesale data replacement is a reset, not a layout change: a reset
+        # invalidates the selection model's stored indexes so a previous
+        # folder's selection cannot carry over to the new rows.
+        self.beginResetModel()
         self._rows = [dict(r) for r in rows]
-        self.layoutChanged.emit()
+        self.endResetModel()
 
     def rowCount(self, parent=QModelIndex()):
         return len(self._rows)
@@ -56,8 +59,8 @@ class _MediaModel(QAbstractTableModel):
             if col == "ready":
                 return _READY_DISPLAY.get(val, "—")
             return "" if val is None else str(val)
-        if role == Qt.BackgroundRole:
-            return QBrush(_row_color(row["ready"]))
+        if role == Qt.ForegroundRole and _COLUMNS[index.column()] == "ready":
+            return QBrush(QColor(status_color(row["ready"])))
         if role == Qt.UserRole:
             return row["media_id"]
         return None
@@ -87,12 +90,16 @@ class MediaTablePane(QTableView):
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.horizontalHeader().setStretchLastSection(True)
         self.setAlternatingRowColors(False)
+        # Inset cell content so the first character clears the Windows 11
+        # selection accent bar on the left edge of selected cells.
+        self.setStyleSheet("QTableView::item { padding-left: 5px; padding-right: 4px; }")
         self._suppress = False
         self.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
     def load_media(self, rows):
         self._suppress = True
         self._model.load(rows)
+        self.clearSelection()   # don't carry a prior folder's selection over
         self._suppress = False
         self.resizeColumnsToContents()
 
@@ -108,11 +115,17 @@ class MediaTablePane(QTableView):
     def highlight_media_ids(self, media_ids: list):
         """Select rows matching media_ids (called from thumbnail pane)."""
         self._suppress = True
-        self.clearSelection()
+        last_col = self._model.columnCount() - 1
+        selection = QItemSelection()
         for mid in media_ids:
             row = self._model.row_for_media_id(mid)
             if row >= 0:
-                self.selectRow(row)
+                selection.select(self._model.index(row, 0),
+                                 self._model.index(row, last_col))
+        self.selectionModel().select(
+            selection,
+            QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows,
+        )
         self._suppress = False
 
     def selected_media_ids(self) -> List[int]:

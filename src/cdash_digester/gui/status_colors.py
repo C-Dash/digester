@@ -12,7 +12,7 @@ single tri-state, then maps it through status_color.
 
 # True = ready/green, False = not-ready/red, None = pending/grey
 _STRONG = {True: "#2d8a2d", False: "#cc0000", None: "#888888"}
-_PALE   = {True: "#e8f5e9", False: "#ffebee", None: "#f5f5f5"}
+_PALE   = {True: "#e8f5e9", False: "#fdedef", None: "#f5f5f5"}
 
 
 def status_color(ready) -> str:

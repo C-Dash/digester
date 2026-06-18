@@ -105,7 +105,7 @@ def _make_thumbnail(filepath: Path) -> QPixmap:
 class _Thumb(QFrame):
     """One thumbnail cell with a stylesheet-based status border."""
 
-    clicked = Signal(int, bool)   # (media_id, ctrl_held)
+    clicked = Signal(int, bool, bool)   # (media_id, ctrl_held, shift_held)
 
     def __init__(self, media_id: int, pixmap: QPixmap,
                  ready, filename: str = "", parent=None):
@@ -160,8 +160,10 @@ class _Thumb(QFrame):
             self._update_style()
 
     def mousePressEvent(self, event):
-        ctrl = bool(event.modifiers() & Qt.ControlModifier)
-        self.clicked.emit(self.media_id, ctrl)
+        mods = event.modifiers()
+        ctrl = bool(mods & Qt.ControlModifier)
+        shift = bool(mods & Qt.ShiftModifier)
+        self.clicked.emit(self.media_id, ctrl, shift)
         super().mousePressEvent(event)
 
 
@@ -185,6 +187,7 @@ class ThumbnailPane(QScrollArea):
 
         self._widgets: Dict[int, _Thumb] = {}
         self._selected: set = set()
+        self._anchor: int = None   # last plain/ctrl click — anchor for shift range
         self._suppress = False
 
     def load_media(self, rows, batch_root: Path):
@@ -196,6 +199,7 @@ class ThumbnailPane(QScrollArea):
             w.deleteLater()
         self._widgets.clear()
         self._selected.clear()
+        self._anchor = None
         if _DEBUG: print("DEBUG load_media: cleared old widgets", flush=True)
 
         vp_width = self.viewport().width()
@@ -223,13 +227,23 @@ class ThumbnailPane(QScrollArea):
         self._layout.setColumnStretch(col_count, 1)
         if _DEBUG: print("DEBUG load_media: done", flush=True)
 
-    def _on_thumb_clicked(self, media_id: int, ctrl: bool):
+    def _on_thumb_clicked(self, media_id: int, ctrl: bool, shift: bool = False):
         if self._suppress:
             return
-        if ctrl:
+        order = list(self._widgets.keys())   # insertion order == display order
+        if shift and self._anchor in self._widgets:
+            i, j = order.index(self._anchor), order.index(media_id)
+            lo, hi = sorted((i, j))
+            range_ids = set(order[lo:hi + 1])
+            # Extend the current selection with Ctrl+Shift; otherwise replace it.
+            self._selected = (self._selected | range_ids) if ctrl else range_ids
+            # Anchor stays put so the range can be re-dragged from it.
+        elif ctrl:
             self._selected.symmetric_difference_update({media_id})
+            self._anchor = media_id
         else:
             self._selected = {media_id}
+            self._anchor = media_id
         self._apply_selection()
         self.selection_changed.emit(list(self._selected))
 
