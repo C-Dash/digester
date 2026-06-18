@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from PySide6.QtCore import QLoggingCategory, QThread, QUrl, Signal, Slot, Qt
-from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtGui import QAction, QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
@@ -563,9 +563,19 @@ class MainWindow(QMainWindow):
 # ---------------------------------------------------------------------------
 
 def main():
+    # When running as a PyInstaller bundle, prepend the bundle directory so
+    # ExifTool (bundled alongside the executable) is found on PATH.
+    if getattr(sys, "frozen", False):
+        import os
+        _bundle_dir = str(Path(sys.executable).parent)
+        os.environ["PATH"] = _bundle_dir + os.pathsep + os.environ.get("PATH", "")
+
     QLoggingCategory.setFilterRules("qt.gui.imageio=false")
     app = QApplication(sys.argv)
     app.setApplicationName("CDASH Presort Digester")
+    _icon_path = Path(__file__).parent / "assets" / "icon.ico"
+    if _icon_path.exists():
+        app.setWindowIcon(QIcon(str(_icon_path)))
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
