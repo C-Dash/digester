@@ -68,7 +68,7 @@ class FolderInfoPane(QFrame):
             self.clear()
             return
 
-        name = folder["cdash_folder_name"] or folder["os_folder_name"] or "—"
+        name = folder["os_folder_name"] or folder["cdash_folder_name"] or "—"
         name_ready = folder["name_ready"]
         media_ready = folder["media_ready"]
 

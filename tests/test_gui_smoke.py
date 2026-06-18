@@ -143,6 +143,24 @@ def test_media_table_highlight_selects_all_ids(qtbot):
     assert pane.selected_media_ids() == []
 
 
+def test_media_table_copy_cell_to_clipboard(qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+    from cdash_digester.gui.media_table import _COLUMNS
+
+    pane = MediaTablePane()
+    qtbot.addWidget(pane)
+    assert pane.contextMenuPolicy() == Qt.CustomContextMenu
+    pane.load_media([_media_row(1, "alpha.tif", ready=False)])
+    model = pane.model()
+
+    pane._copy_cell(model.index(0, _COLUMNS.index("filename")))
+    assert QApplication.clipboard().text() == "alpha.tif"
+
+    pane._copy_cell(model.index(0, _COLUMNS.index("ready")))
+    assert QApplication.clipboard().text() == "Not Ready"   # display text
+
+
 def test_media_table_load_does_not_emit_selection(qtbot):
     pane = MediaTablePane()
     qtbot.addWidget(pane)
@@ -163,7 +181,7 @@ def test_folder_info_pane_shows_folder(qtbot):
         "name_ready": True, "media_ready": False, "notes": "two-page doc",
     })
     pane.show_folder(folder)
-    assert "Main St Folder" in pane._name.text()
+    assert "F1-Main-OF101" in pane._name.text()   # shows the os folder name
     assert pane._name_status.text() == "ok"   # name_ready True
     assert pane._media_status.text() == "NO"   # media_ready False
     assert pane._note.text() == "two-page doc"

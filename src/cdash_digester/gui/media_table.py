@@ -15,7 +15,9 @@ from PySide6.QtCore import (
     Qt, Signal,
 )
 from PySide6.QtGui import QBrush, QColor
-from PySide6.QtWidgets import QAbstractItemView, QTableView, QWidget
+from PySide6.QtWidgets import (
+    QAbstractItemView, QApplication, QMenu, QTableView, QWidget,
+)
 
 from .status_colors import status_color
 
@@ -93,6 +95,8 @@ class MediaTablePane(QTableView):
         # Inset cell content so the first character clears the Windows 11
         # selection accent bar on the left edge of selected cells.
         self.setStyleSheet("QTableView::item { padding-left: 5px; padding-right: 4px; }")
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
         self._suppress = False
         self.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
@@ -133,3 +137,17 @@ class MediaTablePane(QTableView):
             self._model.media_id_at(idx.row())
             for idx in self.selectionModel().selectedRows()
         ]
+
+    def _show_context_menu(self, pos):
+        index = self.indexAt(pos)
+        if not index.isValid():
+            return
+        menu = QMenu(self)
+        act_copy = menu.addAction("Copy Cell")
+        if menu.exec(self.viewport().mapToGlobal(pos)) is act_copy:
+            self._copy_cell(index)
+
+    @staticmethod
+    def _copy_cell(index):
+        """Copy a cell's displayed text to the system clipboard."""
+        QApplication.clipboard().setText(index.data(Qt.DisplayRole) or "")
