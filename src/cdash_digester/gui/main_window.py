@@ -357,10 +357,11 @@ class MainWindow(QMainWindow):
             log_path = self.batch_root / "Catalog" / "batch.log"
             self.console.set_log_path(log_path)
         self._reload_folders()
-        for act in (self._act_init, self._act_csv, self._act_status,
+        for act in (self._act_init, self._act_status,
                     self._act_purge_cache, self._act_val_folder,
                     self._act_assign, self._act_repair):
             act.setEnabled(True)
+        self._sync_csv_enabled()   # CSV stays dim until the batch is ready
 
     @Slot()
     def _initialize_batch(self):
@@ -455,7 +456,17 @@ class MainWindow(QMainWindow):
             self.console.append_message(
                 "Metadata assigned and files renamed.", "success"
             )
-            self._reload_after_folder_scan()
+            item_set_id = (self._current_folder["item_set_id"]
+                           if self._current_folder else None)
+            if item_set_id is not None:
+                # Re-scan the folder so ready/notes reflect the renamed files
+                # (assignment itself leaves media status untouched).
+                self.console.append_message("Re-scanning folder…", "info")
+                self._run("validate_folder",
+                          item_set_id=item_set_id,
+                          on_finish=self._reload_after_folder_scan)
+            else:
+                self._reload_after_folder_scan()
         else:
             self.console.append_message(
                 "Metadata assignment failed.", "error"
@@ -516,6 +527,9 @@ class MainWindow(QMainWindow):
         row = self.folder_pane.current_row()
         if row is not None:
             self._on_folder_selected(row)
+        # Assign Metadata runs synchronously (no worker → no _set_busy), so
+        # re-derive the CSV action here in case batch ready changed.
+        self._sync_csv_enabled()
 
     def _set_busy(self, busy: bool):
         """Enable/disable all DB-touching UI while a worker runs.
@@ -527,10 +541,22 @@ class MainWindow(QMainWindow):
         See ``_Worker`` for the full threading model.
         """
         self.folder_pane.setEnabled(not busy)
-        for act in (self._act_choose, self._act_init, self._act_csv,
+        for act in (self._act_choose, self._act_init,
                     self._act_status, self._act_purge_cache,
                     self._act_val_folder, self._act_assign, self._act_repair):
             act.setEnabled(not busy)
+        # CSV is special: disabled while busy, and otherwise only enabled when
+        # the batch ready status is True (not blanket-enabled with the rest).
+        if busy:
+            self._act_csv.setEnabled(False)
+        else:
+            self._sync_csv_enabled()
+
+    def _sync_csv_enabled(self):
+        """Enable 'Produce CSV Files' only when the batch ready status is True."""
+        batch = (self.digester.get_batch()
+                 if self.digester and self.digester.is_open else None)
+        self._act_csv.setEnabled(bool(batch and batch["ready"]))
 
     def _run(self, operation: str, on_finish=None, **kwargs):
         """Dispatch a digester operation to a background thread.
