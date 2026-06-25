@@ -38,6 +38,7 @@ _THUMB = 200       # bounding box in px
 _BORDER = 3
 _SEL_BORDER = 6
 _LABEL_H = 32      # height reserved for filename text
+_COLS = 4          # thumbnails per row
 
 
 # ---------------------------------------------------------------------------
@@ -235,9 +236,8 @@ class ThumbnailPane(QScrollArea):
         self._anchor = None
         if _DEBUG: print("DEBUG load_media: cleared old widgets", flush=True)
 
-        vp_width = self.viewport().width()
-        col_count = max(1, (vp_width - 16) // (_THUMB + _SEL_BORDER * 2 + 8))
-        if _DEBUG: print(f"DEBUG load_media: viewport_width={vp_width}, col_count={col_count}", flush=True)
+        col_count = _COLS
+        if _DEBUG: print(f"DEBUG load_media: col_count={col_count}", flush=True)
 
         for i, row in enumerate(rows):
             try:
