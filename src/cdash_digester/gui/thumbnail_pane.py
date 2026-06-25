@@ -22,7 +22,8 @@ from PIL import Image
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPixmap, QImage
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
+    QFrame, QGraphicsDropShadowEffect, QGridLayout, QLabel, QScrollArea,
+    QVBoxLayout, QWidget,
 )
 
 from .status_colors import status_color as _border_color
@@ -108,7 +109,7 @@ class _Thumb(QFrame):
     clicked = Signal(int, bool, bool)   # (media_id, ctrl_held, shift_held)
 
     def __init__(self, media_id: int, pixmap: QPixmap,
-                 ready, filename: str = "", parent=None):
+                 ready, filename: str = "", page_label: str = "", parent=None):
         super().__init__(parent)
         self.media_id  = media_id
         self._ready    = ready
@@ -129,6 +130,9 @@ class _Thumb(QFrame):
         self._label.setPixmap(scaled)
         layout.addWidget(self._label)
 
+        if page_label:
+            self._add_page_badge(page_label, scaled)
+
         self._name_label = QLabel(filename)
         self._name_label.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         self._name_label.setFixedSize(_w, _LABEL_H)
@@ -140,6 +144,35 @@ class _Thumb(QFrame):
         layout.addWidget(self._name_label)
 
         self._update_style()
+
+    def _add_page_badge(self, text: str, scaled: QPixmap):
+        """Overlay a page number on the image's upper-left corner.
+
+        A black drop shadow (zero offset) acts as a halo so the yellow number
+        stays legible over light or dark previews.
+        """
+        badge = QLabel(text, self._label)
+        badge.setObjectName("pageBadge")
+        # Scope the rule to this widget so it doesn't pick up the parent label's
+        # status border/background (which would render as a coloured rectangle).
+        badge.setStyleSheet(
+            "QLabel#pageBadge { color: yellow; font-weight: bold; "
+            "font-size: 14pt; background: transparent; border: none; "
+            "padding: 0px; }"
+        )
+        badge.setAttribute(Qt.WA_TransparentForMouseEvents)
+        glow = QGraphicsDropShadowEffect(badge)
+        glow.setColor(QColor("black"))
+        glow.setBlurRadius(4)
+        glow.setOffset(0)
+        badge.setGraphicsEffect(glow)
+        badge.adjustSize()
+
+        # Anchor to the image's top-left, accounting for the letterbox margin.
+        inset = 4
+        ox = (self._label.width()  - scaled.width())  // 2 + inset
+        oy = (self._label.height() - scaled.height()) // 2 + inset
+        badge.move(ox, oy)
 
     def _update_style(self):
         color = _border_color(self._ready)
@@ -212,7 +245,11 @@ class ThumbnailPane(QScrollArea):
                 if _DEBUG: print(f"DEBUG load_media [{i}]: filepath={filepath} exists={filepath.exists()}", flush=True)
                 pm = _make_thumbnail(filepath) if filepath.exists() else _blank()
                 if _DEBUG: print(f"DEBUG load_media [{i}]: pixmap ready, null={pm.isNull()}", flush=True)
-                widget = _Thumb(row["media_id"], pm, row["ready"], row["filename"])
+                page_label = (str(row["page_num"])
+                              if row["num_pages"] and row["num_pages"] > 1
+                              and row["page_num"] else "")
+                widget = _Thumb(row["media_id"], pm, row["ready"],
+                                row["filename"], page_label)
                 if _DEBUG: print(f"DEBUG load_media [{i}]: _Thumb created", flush=True)
                 widget.clicked.connect(self._on_thumb_clicked)
                 self._layout.addWidget(widget, i // col_count, i % col_count)

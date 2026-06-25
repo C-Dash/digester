@@ -47,6 +47,7 @@ def _media_row(media_id, filename, ready=True):
 
 def _thumb_row(media_id, filename, ready=True):
     return {"media_id": media_id, "filename": filename, "ready": ready,
+            "page_num": 1, "num_pages": 1,
             "filepath": f"media/{filename}"}   # file absent -> blank thumbnail
 
 

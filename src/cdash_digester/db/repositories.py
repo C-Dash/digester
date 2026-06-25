@@ -323,7 +323,7 @@ class MediaRepo(_Repo):
 
     def get_media_for_folder(self, item_set_id: int) -> list:
         return self._con.execute(
-            """SELECT m.*, d.doc_type_code
+            """SELECT m.*, d.doc_type_code, d.num_pages
                FROM cdash_media m
                LEFT JOIN cdash_doc d ON m.doc_item_id = d.doc_item_id
                WHERE m.item_set_id=?
