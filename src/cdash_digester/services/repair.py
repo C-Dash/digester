@@ -74,8 +74,9 @@ class RepairService:
             f"Repair complete: {repaired} repaired, {failed} failed, {skipped} skipped.",
             "info",
         )
-        counts = dig._collect_and_store_counts()
-        dig.log(dig._counts_summary(counts), "info")
+        # Persist refreshed counts to the DB, but don't show the batch summary
+        # here — it's noise after a repair.
+        dig._collect_and_store_counts()
 
         for item_set_id in affected_folders:
             dig.validate_folder(item_set_id)
