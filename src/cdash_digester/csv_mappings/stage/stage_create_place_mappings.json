@@ -1,0 +1,81 @@
+{
+    "filename": "place.csv",
+    "filesize": "1407",
+    "filepath": "/tmp/omekadkfcgm",
+    "media_type": "text/csv",
+    "resource_type": "items",
+    "comment": "",
+    "automap_check_names_alone": true,
+    "column-resource_template": [
+        "1"
+    ],
+    "column-resource_class": {
+        "1": "1"
+    },
+    "column-property": {
+        "2": {
+            "dcterms:identifier": 10
+        },
+        "3": {
+            "cdash:placeItem": 290
+        },
+        "4": {
+            "cdash:placeName": 292
+        },
+        "6": {
+            "cdash:placeType": 270
+        },
+        "9": {
+            "cdash:houseNum": 283
+        },
+        "10": {
+            "cdash:streetName": 282
+        },
+        "11": {
+            "cdash:streetSort": 285
+        },
+        "12": {
+            "cdash:Neighborhood": 291
+        },
+        "13": {
+            "cdash:chcDist": 284
+        },
+        "14": {
+            "cdash:Folder": 293
+        }
+    },
+    "column-map-lat": {
+        "7": "1"
+    },
+    "column-map-lng": {
+        "8": "1"
+    },
+    "column-item_set": {
+        "15": "dcterms:identifier"
+    },
+    "generic-data": "default",
+    "media-source": "default",
+    "mapping-module": "default",
+    "resource-identifier-property": "",
+    "o:resource_template": "",
+    "o:resource_class": "",
+    "o:owner": {
+        "o:id": 2
+    },
+    "o:is_public": 1,
+    "o:site": [
+        "2",
+        "3"
+    ],
+    "multivalue_separator": "|",
+    "global_language": "",
+    "action": "create",
+    "identifier_column": 0,
+    "identifier_property": "dcterms:identifier",
+    "action_unidentified": "skip",
+    "rows_by_batch": 20,
+    "column-multivalue": [],
+    "delimiter": ",",
+    "enclosure": "\"",
+    "escape": "\\"
+}

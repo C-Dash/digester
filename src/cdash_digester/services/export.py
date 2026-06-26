@@ -5,6 +5,13 @@ layouts preserved verbatim.
 """
 
 import csv
+import shutil
+from pathlib import Path
+
+# Bundled folder of Omeka CSV-mapping JSON files, copied into each batch's
+# catalog on export. Mirrors the gui/assets resource pattern; export.py lives
+# one level deeper (services/), so go up two parents to the package root.
+_CSV_MAPPINGS_DIR = Path(__file__).resolve().parent.parent / "csv_mappings"
 
 
 class CatalogExportService:
@@ -28,10 +35,33 @@ class CatalogExportService:
         self._write_place_csv()
         self._write_document_csv()
         self._write_media_csv()
+        self._copy_csv_mappings()
         dig.log(
             "CSV files written to catalog/.  " + dig._counts_summary(counts),
             "info",
         )
+
+    def _copy_csv_mappings(self):
+        """Copy the bundled csv_mappings/ tree into catalog/csv_mappings/,
+        skipping files that already exist (preserves per-batch edits)."""
+        dig = self._dig
+        if not _CSV_MAPPINGS_DIR.is_dir():
+            dig.log("csv_mappings source folder not found — skipped.", "warning")
+            return
+        dest_root = dig.catalog_path / "csv_mappings"
+        copied = 0
+        for src_file in _CSV_MAPPINGS_DIR.rglob("*"):
+            if src_file.is_dir():
+                continue
+            target = dest_root / src_file.relative_to(_CSV_MAPPINGS_DIR)
+            if target.exists():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_file, target)
+            copied += 1
+        if copied:
+            dig.log(f"Copied {copied} CSV-mapping file(s) to "
+                    f"catalog/csv_mappings/.", "info")
 
     def _write_batch_csv(self, batch: dict):
         out = self._dig.catalog_path / "batch.csv"

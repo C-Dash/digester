@@ -1,0 +1,61 @@
+{
+    "filename": "media.csv",
+    "filesize": "39624",
+    "filepath": "/tmp/omekaRJIU16",
+    "media_type": "text/csv",
+    "resource_type": "media",
+    "comment": "",
+    "automap_check_names_alone": true,
+    "column-resource_template": [
+        "1"
+    ],
+    "column-property": {
+        "1": {
+            "dcterms:title": 1
+        },
+        "2": {
+            "dcterms:identifier": 10
+        },
+        "3": {
+            "dcterms:relation": 13
+        },
+        "4": {
+            "dcterms:type": 8
+        },
+        "5": {
+            "dcterms:source": 11
+        },
+        "6": {
+            "bibo:number": 108
+        },
+        "7": {
+            "dcterms:dateAccepted": 43
+        }
+    },
+    "column-item": {
+        "3": "dcterms:identifier"
+    },
+    "column-media_source": {
+        "5": "sideload"
+    },
+    "generic-data": "default",
+    "media-source": "default",
+    "resource-identifier-property": "",
+    "o:resource_template": "",
+    "o:resource_class": "",
+    "o:owner": {
+        "o:id": 2
+    },
+    "o:is_public": 1,
+    "multivalue_separator": "|",
+    "global_language": "",
+    "action": "create",
+    "identifier_column": 0,
+    "identifier_property": "internal_id",
+    "action_unidentified": "skip",
+    "rows_by_batch": 20,
+    "column-multivalue": [],
+    "delimiter": ",",
+    "enclosure": "\"",
+    "escape": "\\"
+}

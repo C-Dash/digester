@@ -1,0 +1,42 @@
+{
+    "filename": "folder.csv",
+    "filesize": "389",
+    "filepath": "/tmp/omekaS2FjFZ",
+    "media_type": "text/csv",
+    "resource_type": "item_sets",
+    "comment": "",
+    "automap_check_names_alone": true,
+    "column-resource_template": [
+        "1"
+    ],
+    "column-resource_class": {
+        "1": "1"
+    },
+    "column-property": {
+        "2": {
+            "cdash:Folder": 293
+        },
+        "3": {
+            "dcterms:identifier": 10
+        }
+    },
+    "generic-data": "default",
+    "resource-identifier-property": "",
+    "o:resource_template": "",
+    "o:resource_class": "",
+    "o:owner": {
+        "o:id": 2
+    },
+    "o:is_public": 1,
+    "multivalue_separator": "|",
+    "global_language": "",
+    "action": "create",
+    "identifier_column": 0,
+    "identifier_property": "dcterms:identifier",
+    "action_unidentified": "skip",
+    "rows_by_batch": 20,
+    "column-multivalue": [],
+    "delimiter": ",",
+    "enclosure": "\"",
+    "escape": "\\"
+}

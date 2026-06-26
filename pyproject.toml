@@ -24,6 +24,9 @@ dev = [
 [project.scripts]
 cdash-digester = "cdash_digester.gui.main_window:main"
 
+[tool.setuptools.package-data]
+cdash_digester = ["csv_mappings/**/*"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

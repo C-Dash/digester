@@ -1,0 +1,90 @@
+{
+    "filename": "document.csv",
+    "filesize": "3036",
+    "filepath": "/tmp/omekaepfvu1",
+    "media_type": "text/csv",
+    "resource_type": "items",
+    "comment": "",
+    "automap_check_names_alone": true,
+    "column-resource_template": [
+        "1"
+    ],
+    "column-resource_class": {
+        "1": "1"
+    },
+    "column-property": {
+        "2": {
+            "dcterms:identifier": 10
+        },
+        "3": {
+            "dcterms:title": 1
+        },
+        "4": {
+            "dcterms:type": 8
+        },
+        "5": {
+            "dcterms:bibliographicCitation": 48
+        },
+        "6": {
+            "dcterms:rights": 15
+        },
+        "7": {
+            "cdash:placeItem": 290
+        },
+        "11": {
+            "bibo:numPages": 106
+        },
+        "12": {
+            "cdash:streetSort": 285
+        },
+        "13": {
+            "cdash:Neighborhood": 291
+        },
+        "14": {
+            "cdash:chcDist": 284
+        },
+        "15": {
+            "dcterms:dateAccepted": 43
+        }
+    },
+    "column-data-type": {
+        "7": "resource"
+    },
+    "column-resource-identifier-property": {
+        "7": "dcterms:identifier"
+    },
+    "column-item_set": {
+        "10": "dcterms:identifier"
+    },
+    "column-map-lat": {
+        "16": "1"
+    },
+    "column-map-lng": {
+        "17": "1"
+    },
+    "generic-data": "default",
+    "media-source": "default",
+    "mapping-module": "default",
+    "resource-identifier-property": "",
+    "o:resource_template": "",
+    "o:resource_class": "",
+    "o:owner": {
+        "o:id": 2
+    },
+    "o:is_public": 1,
+    "o:site": [
+        "2",
+        "3"
+    ],
+    "multivalue_separator": "|",
+    "global_language": "",
+    "action": "create",
+    "identifier_column": 0,
+    "identifier_property": "dcterms:identifier",
+    "action_unidentified": "skip",
+    "rows_by_batch": 20,
+    "column-multivalue": [],
+    "delimiter": ",",
+    "enclosure": "\"",
+    "escape": "\\"
+}
