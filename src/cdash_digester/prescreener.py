@@ -24,7 +24,10 @@ Rejection criteria
 
 import argparse
 import csv
+import json
+import os
 import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -33,7 +36,6 @@ from typing import Callable, Tuple
 from PIL import Image, UnidentifiedImageError
 from PIL.ExifTags import TAGS
 import fitz  # pymupdf
-import exiftool
 
 from .cdash_objects import BatchDB
 
@@ -68,11 +70,29 @@ _REJECTS_FIELDS = [
 
 def _get_exiftool_tags(filepath: Path) -> dict:
     """Return ExifTool metadata for filepath with numeric tag values (-n).
-    Returns empty dict if ExifTool is unavailable or fails."""
+    Returns empty dict if ExifTool is unavailable or fails.
+
+    Invokes exiftool as a one-shot subprocess with fully controlled handles:
+    stdin and stderr go to DEVNULL, stdout is captured and fully drained by
+    subprocess.run, and on Windows CREATE_NO_WINDOW suppresses a console flash.
+    This is deliberate, not incidental — the python-exiftool ExifToolHelper kept
+    a -stay_open child whose stderr was an un-drained pipe; in the windowed
+    (no-console) PyInstaller build that pipe filled with ExifTool warnings part
+    way through a folder, blocking the child and deadlocking the scan. Sending
+    stderr to DEVNULL removes that failure mode entirely.
+    """
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     try:
-        with exiftool.ExifToolHelper() as et:
-            results = et.get_metadata(str(filepath), params=["-n"])
-        return results[0] if results else {}
+        proc = subprocess.run(
+            ["exiftool", "-n", "-json", str(filepath)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+            timeout=30,
+        )
+        data = json.loads(proc.stdout or b"[]")
+        return data[0] if data else {}
     except Exception:
         return {}
 
