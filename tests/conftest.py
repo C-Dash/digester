@@ -6,7 +6,7 @@ These tests are deterministic and network-free:
   - the Omeka-S validator is replaced by an in-memory fake so scan tests never
     touch the network.
 
-ExifTool is NOT required: prescreener._get_exiftool_tags swallows failures and
+ExifTool is NOT required: exiftool_util.read_tags swallows failures and
 returns {}, so capture dates simply fall back to the filesystem.
 
 GUI tests run headless: QT_QPA_PLATFORM=offscreen is set here, before any Qt

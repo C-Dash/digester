@@ -21,7 +21,8 @@ from pathlib import Path
 from typing import Iterable, List, Tuple
 
 from PIL import Image
-import exiftool
+
+from .exiftool_util import read_tags
 
 # EXIF Orientation (numeric) → Pillow rotation angle in degrees CCW with expand=True
 # Pillow positive angles are CCW; expand=True resizes canvas to fit rotated content.
@@ -80,12 +81,7 @@ def _append_rejects_csv(
 
 def _get_exif_orientation(filepath: Path):
     """Return numeric EXIF Orientation via ExifTool, or None on failure."""
-    try:
-        with exiftool.ExifToolHelper() as et:
-            results = et.get_metadata(str(filepath), params=["-n"])
-        return (results[0] if results else {}).get("EXIF:Orientation")
-    except Exception:
-        return None
+    return read_tags(filepath).get("EXIF:Orientation")
 
 
 def repair_file(

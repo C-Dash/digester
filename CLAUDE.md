@@ -85,7 +85,7 @@ Issue codes are normalized: lowercase, hyphens → underscores. The `multiframe_
 - `PySide6` — GUI framework
 - `Pillow` — image reading, mode checks, frame counting, repair transforms
 - `PyMuPDF (fitz)` — PDF metadata and XMP parsing
-- `exiftool` (python-exiftool wrapper) — EXIF Orientation, HostComputer, DateTimeOriginal
+- `exiftool` (external executable, called via one-shot subprocess in `exiftool_util.read_tags`) — EXIF Orientation, HostComputer, DateTimeOriginal
 
 ## Development Notes
 

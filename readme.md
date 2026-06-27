@@ -35,7 +35,7 @@ references against the live Omeka API, and exports the catalog CSVs.
 - **Python 3.11+**
 - **ExifTool** on the `PATH` (used for EXIF capture-date / orientation reads).
 - Python packages (installed via the project): PySide6, Pillow, PyMuPDF,
-  requests, PyExifTool.
+  requests.
 
 ## Install (development)
 

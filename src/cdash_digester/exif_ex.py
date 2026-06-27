@@ -5,14 +5,13 @@ Usage
 -----
     python -m cdash_digester.exif_ex <filepath>
 
-Requires ExifTool (https://exiftool.org) on PATH and the pyexiftool package
-(declared as the PyExifTool dependency).
+Requires ExifTool (https://exiftool.org) on PATH. Tags are read via the shared
+one-shot subprocess helper (see exiftool_util.read_tags).
 """
 
 import argparse
-import sys
 
-import exiftool
+from .exiftool_util import read_tags
 
 
 def main():
@@ -22,22 +21,13 @@ def main():
     parser.add_argument("filepath", help="Path to the image file")
     args = parser.parse_args()
 
-    try:
-        with exiftool.ExifToolHelper() as et:
-            results = et.get_metadata(args.filepath)
-    except exiftool.exceptions.ExifToolExecuteError as exc:
-        print(f"ExifTool error: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except FileNotFoundError:
-        print("ExifTool executable not found — install it and ensure it is on PATH.",
-              file=sys.stderr)
-        sys.exit(1)
+    # numeric=False keeps human-readable tag values (e.g. Orientation names).
+    tags = read_tags(args.filepath, numeric=False)
 
-    if not results:
-        print("No metadata returned.")
+    if not tags:
+        print("No metadata returned — is ExifTool installed and on PATH?")
         return
 
-    tags = results[0]
     max_key = max((len(k) for k in tags), default=0)
     sep = "=" * 70
 

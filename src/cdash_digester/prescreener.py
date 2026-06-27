@@ -24,10 +24,7 @@ Rejection criteria
 
 import argparse
 import csv
-import json
-import os
 import shutil
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +35,7 @@ from PIL.ExifTags import TAGS
 import fitz  # pymupdf
 
 from .cdash_objects import BatchDB
+from .exiftool_util import read_tags
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -67,35 +65,6 @@ _REJECTS_FIELDS = [
 # ---------------------------------------------------------------------------
 # Low-level file screening
 # ---------------------------------------------------------------------------
-
-def _get_exiftool_tags(filepath: Path) -> dict:
-    """Return ExifTool metadata for filepath with numeric tag values (-n).
-    Returns empty dict if ExifTool is unavailable or fails.
-
-    Invokes exiftool as a one-shot subprocess with fully controlled handles:
-    stdin and stderr go to DEVNULL, stdout is captured and fully drained by
-    subprocess.run, and on Windows CREATE_NO_WINDOW suppresses a console flash.
-    This is deliberate, not incidental — the python-exiftool ExifToolHelper kept
-    a -stay_open child whose stderr was an un-drained pipe; in the windowed
-    (no-console) PyInstaller build that pipe filled with ExifTool warnings part
-    way through a folder, blocking the child and deadlocking the scan. Sending
-    stderr to DEVNULL removes that failure mode entirely.
-    """
-    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    try:
-        proc = subprocess.run(
-            ["exiftool", "-n", "-json", str(filepath)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            creationflags=creationflags,
-            timeout=30,
-        )
-        data = json.loads(proc.stdout or b"[]")
-        return data[0] if data else {}
-    except Exception:
-        return {}
-
 
 def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
     """Return (ok, message, flavor) for PDF/A conformance via XMP marker.
@@ -238,7 +207,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         return False, props
 
     # EXIF capture date via ExifTool (called once; et_tags reused below)
-    et_tags = _get_exiftool_tags(filepath)
+    et_tags = read_tags(filepath)
     raw = et_tags.get("EXIF:DateTimeOriginal") or et_tags.get("EXIF:ModifyDate")
     if raw:
         props["capture_date"] = str(raw)[:10].replace(":", "-")
@@ -456,7 +425,7 @@ def main():
             # --- ExifTool tags ---
             print(f"\n--- ExifTool Tags ---")
             try:
-                et_tags = _get_exiftool_tags(filepath)
+                et_tags = read_tags(filepath)
                 if et_tags:
                     max_key = max((len(k) for k in et_tags if k != "SourceFile"), default=30)
                     for key, val in sorted(et_tags.items()):
