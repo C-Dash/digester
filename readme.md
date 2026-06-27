@@ -267,21 +267,31 @@ Sheet · `AM` Published Material · `SM` Supplemental Material · `VD` Detail Vi
 
 ## Packaging (Windows)
 
-Build a self-contained folder distribution with PyInstaller (run in the venv):
+Build a self-contained folder distribution with PyInstaller (run in the venv).
+The build is driven by the version-controlled `cdash-digester.spec`, which is the
+source of truth for what gets bundled (the `gui/assets` and `csv_mappings`
+folders, the `exiftool.exe` binary, and the `fitz` package):
 
 ```
-pyinstaller -y --onedir --windowed --name cdash-digester \
-  --icon=src/cdash_digester/gui/assets/icon.ico \
-  --add-data "src/cdash_digester/gui/assets;cdash_digester/gui/assets" \
-  --add-binary ".venv/Scripts/exiftool.exe;." \
-  --hidden-import fitz --collect-all fitz \
-  run_gui.py
+pyinstaller cdash-digester.spec
+```
+
+For a clean rebuild, clear the caches first so source changes are picked up:
+
+```
+rm -rf build dist
+pyinstaller cdash-digester.spec
 ```
 
 Output is `dist/cdash-digester/` (ship the **whole** folder — the `.exe` needs
 `_internal/` beside it). ExifTool is bundled and found at runtime via
-`sys._MEIPASS`. The generated `.spec` is gitignored; rebuild with
-`pyinstaller -y cdash-digester.spec`.
+`sys._MEIPASS`.
+
+> The spec was originally generated from a long `pyinstaller --onedir --windowed
+> …` command, but that command has since drifted (e.g. it predates the
+> `csv_mappings` bundle). Edit `cdash-digester.spec` directly rather than
+> regenerating it — regenerating would overwrite the tracked spec and drop
+> bundled data.
 
 ## Testing
 
