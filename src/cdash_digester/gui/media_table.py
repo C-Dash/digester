@@ -21,8 +21,8 @@ from PySide6.QtWidgets import (
 
 from .status_colors import status_color
 
-_COLUMNS  = ["filename", "ready",  "doc_type_code", "page_num", "repair_issues", "notes"]
-_HEADERS  = ["Filename",  "Status", "Type",          "Page",    "Repair Issues", "Notes"]
+_COLUMNS  = ["filename", "ready",  "doc_type_code", "page_num", "format_note", "repair_issues", "notes"]
+_HEADERS  = ["Filename",  "Status", "Type",          "Page",    "Format",      "Repair Issues", "Notes"]
 
 _READY_DISPLAY = {True: "Ready", False: "Not Ready", None: "—"}
 
