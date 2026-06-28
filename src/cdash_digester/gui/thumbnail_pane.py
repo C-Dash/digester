@@ -110,7 +110,8 @@ class _Thumb(QFrame):
     clicked = Signal(int, bool, bool)   # (media_id, ctrl_held, shift_held)
 
     def __init__(self, media_id: int, pixmap: QPixmap,
-                 ready, filename: str = "", page_label: str = "", parent=None):
+                 ready, filename: str = "", page_label: str = "",
+                 badge_color: str = "yellow", parent=None):
         super().__init__(parent)
         self.media_id  = media_id
         self._ready    = ready
@@ -132,7 +133,7 @@ class _Thumb(QFrame):
         layout.addWidget(self._label)
 
         if page_label:
-            self._add_page_badge(page_label, scaled)
+            self._add_page_badge(page_label, scaled, badge_color)
 
         self._name_label = QLabel(filename)
         self._name_label.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
@@ -146,18 +147,19 @@ class _Thumb(QFrame):
 
         self._update_style()
 
-    def _add_page_badge(self, text: str, scaled: QPixmap):
-        """Overlay a page number on the image's upper-left corner.
+    def _add_page_badge(self, text: str, scaled: QPixmap, color: str = "yellow"):
+        """Overlay a page badge on the image's upper-left corner.
 
-        A black drop shadow (zero offset) acts as a halo so the yellow number
-        stays legible over light or dark previews.
+        A black drop shadow (zero offset) acts as a halo so the number stays
+        legible over light or dark previews, for both the yellow image page
+        numbers and the red PDF page counts.
         """
         badge = QLabel(text, self._label)
         badge.setObjectName("pageBadge")
         # Scope the rule to this widget so it doesn't pick up the parent label's
         # status border/background (which would render as a coloured rectangle).
         badge.setStyleSheet(
-            "QLabel#pageBadge { color: yellow; font-weight: bold; "
+            f"QLabel#pageBadge {{ color: {color}; font-weight: bold; "
             "font-size: 14pt; background: transparent; border: none; "
             "padding: 0px; }"
         )
@@ -245,11 +247,18 @@ class ThumbnailPane(QScrollArea):
                 if _DEBUG: print(f"DEBUG load_media [{i}]: filepath={filepath} exists={filepath.exists()}", flush=True)
                 pm = _make_thumbnail(filepath) if filepath.exists() else _blank()
                 if _DEBUG: print(f"DEBUG load_media [{i}]: pixmap ready, null={pm.isNull()}", flush=True)
-                page_label = (str(row["page_num"])
-                              if row["num_pages"] and row["num_pages"] > 1
-                              and row["page_num"] else "")
+                if filepath.suffix.lower() == ".pdf":
+                    # PDF badge = page count (always shown, even 1), red.
+                    page_label = str(row["num_pages"]) if row["num_pages"] else ""
+                    badge_color = "red"
+                else:
+                    # Image badge = page number within a multi-page doc, yellow.
+                    page_label = (str(row["page_num"])
+                                  if row["num_pages"] and row["num_pages"] > 1
+                                  and row["page_num"] else "")
+                    badge_color = "yellow"
                 widget = _Thumb(row["media_id"], pm, row["ready"],
-                                row["filename"], page_label)
+                                row["filename"], page_label, badge_color)
                 if _DEBUG: print(f"DEBUG load_media [{i}]: _Thumb created", flush=True)
                 widget.clicked.connect(self._on_thumb_clicked)
                 self._layout.addWidget(widget, i // col_count, i % col_count)
