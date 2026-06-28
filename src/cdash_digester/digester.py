@@ -255,7 +255,8 @@ class Digester:
                 f"  name={'ok' if f['name_ready'] else 'NO':2s}"
                 f"  media={'ok' if f['media_ready'] else 'NO'}"
             )
-        return "\n".join(lines)
+        counts = self._collect_and_store_counts()
+        return "\n".join(lines) + "\n" + self._counts_summary(counts)
 
     # ------------------------------------------------------------------ misc
 
