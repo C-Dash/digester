@@ -72,8 +72,8 @@ def test_tiff_multiframe_rejected_first_issue(tmp_path):
     p = make_multiframe_tiff(tmp_path / "a.tif", frames=3)
     accepted, props = screen_file(p)
     assert accepted is False
-    # multiframe_tiff is always inserted first.
-    assert props["repair_issues"][0] == "multiframe_tiff"
+    # multiframe TIFFs are non-repairable; repair_issues is Reject-only.
+    assert props["repair_issues"] == ["Reject"]
 
 
 # ------------------------------------------------------------------------ PDF
@@ -94,3 +94,4 @@ def test_unsupported_suffix_rejected(tmp_path):
     accepted, props = screen_file(p)
     assert accepted is False
     assert "Unsupported file type" in props["qa_note"]
+    assert props["repair_issues"] == ["Reject"]

@@ -118,7 +118,10 @@ def repair_file(
         return False, msg + warn
 
     if "reject" in issues:
-        msg = "Cannot repair non-PDF/A — manual conversion required"
+        if filepath.suffix.lower() in (".tif", ".tiff"):
+            msg = "Cannot repair multi-frame TIFF — manual intervention required"
+        else:
+            msg = "Cannot repair non-PDF/A — manual conversion required"
         warn = _append_rejects_csv(catalog_path, filepath, issues, msg)
         try:
             filepath.unlink()

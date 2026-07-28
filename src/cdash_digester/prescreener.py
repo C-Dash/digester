@@ -127,6 +127,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
 
     if suffix not in _ACCEPTED_SUFFIXES:
         props["qa_note"] = f"Unsupported file type: {suffix}"
+        props["repair_issues"] = ["Reject"]
         return False, props
 
     # For TIFFs: check compression before the size check so wrong_compression is
@@ -228,7 +229,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
 
     elif suffix in (".tif", ".tiff"):
         if getattr(img, 'n_frames', 1) > 1:
-            props["repair_issues"].insert(0, "multiframe_tiff")
+            props["repair_issues"] = ["Reject"]
             props["qa_note"] = "REJECT: multiframe-tiff"
             return False, props
 

@@ -52,7 +52,7 @@ Key tables: `cdash_item_sets`, `cdash_media`, `cdash_rejects`
 
 `cdash_media` important columns:
 - `ready` INTEGER (0/1) — whether file passed prescreening
-- `repair_issues` TEXT — comma-separated issue codes (e.g. `"multiframe_tiff, rgba"`)
+- `repair_issues` TEXT — comma-separated issue codes (e.g. `"Reject"` or `"rgba"`)
 - `notes` TEXT — human-readable qa_note from prescreener
 
 ## Prescreener Acceptance Criteria
@@ -69,9 +69,9 @@ Key tables: `cdash_item_sets`, `cdash_media`, `cdash_rejects`
 |------|---------|-----------------|
 | `rgba` | Image is RGBA mode | Yes — composited onto white RGB |
 | `iphone_vert` | iPhone portrait TIFF needing rotation | Yes — rotated via EXIF Orientation |
-| `multiframe_tiff` | TIFF contains > 1 frame | **No** — must be handled manually |
+| `Reject` | TIFF has > 1 frame, or PDF lacks a PDF/A-1b conformance marker | **No** — must be handled manually |
 
-Issue codes are normalized: lowercase, hyphens → underscores. The `multiframe_tiff` issue is always inserted first in the list.
+Issue codes are normalized: lowercase, hyphens → underscores (so `Reject` is matched case-insensitively as `reject`). For a multi-frame TIFF, `repair_issues` is set to `["Reject"]` only — any other issues detected for that file (e.g. `wrong_compression`) are discarded in favor of the single `Reject` code.
 
 ## Key Entry Points
 
@@ -92,7 +92,7 @@ Issue codes are normalized: lowercase, hyphens → underscores. The `multiframe_
 - ExifTool must be on PATH for EXIF reads to work.
 - Repair backs up originals to `Rejects/orig/` before overwriting.
 - The GUI runs `Digester` methods on a `QThread`; the `log` callback is the only UI coupling.
-- `repair_file()` in `repair_media.py` must never attempt to repair `multiframe_tiff` — it returns early with an error message.
+- `repair_file()` in `repair_media.py` must never attempt to repair `Reject`-flagged files (multi-frame TIFF or non-archival PDF) — it returns early with an error message.
 
 
 Revisions to prescreener:
