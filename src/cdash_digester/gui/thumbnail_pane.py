@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict
 
 import fitz                        # pymupdf
-from PIL import Image
+from PIL import Image, ImageOps
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPixmap, QImage
@@ -70,6 +70,7 @@ def _render_image(filepath: Path) -> QPixmap:
     if _DEBUG: print(f"DEBUG _render_image: {filepath}", flush=True)
     try:
         img = Image.open(filepath)
+        img = ImageOps.exif_transpose(img)
         img.thumbnail((_THUMB, _THUMB), Image.LANCZOS)
         buf = io.BytesIO()
         img.save(buf, format="PNG")

@@ -95,7 +95,7 @@ def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
         )
         if has_pdfa_ns and has_conformance:
             return True, "PDF/A conformance marker found", "PDF/A"
-        return False, "PDF/A conformance marker not found in XMP metadata", "PDF"
+        return False, "Reject:PDF/A conformance marker not found in XMP metadata", "PDF"
     except Exception as exc:
         return False, f"PDF error: {exc}", "PDF"
 
@@ -227,7 +227,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     elif suffix in (".tif", ".tiff"):
         if getattr(img, 'n_frames', 1) > 1:
             props["repair_issues"].insert(0, "multiframe_tiff")
-            props["qa_note"] = "multiframe-tiff"
+            props["qa_note"] = "REJECT: multiframe-tiff"
             return False, props
 
         tag_v2 = getattr(img, "tag_v2", {})

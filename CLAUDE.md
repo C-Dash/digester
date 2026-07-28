@@ -93,3 +93,22 @@ Issue codes are normalized: lowercase, hyphens → underscores. The `multiframe_
 - Repair backs up originals to `Rejects/orig/` before overwriting.
 - The GUI runs `Digester` methods on a `QThread`; the `log` callback is the only UI coupling.
 - `repair_file()` in `repair_media.py` must never attempt to repair `multiframe_tiff` — it returns early with an error message.
+
+
+Revisions to prescreener:
+
+* 
+
+Revisions to Repair Behavior:
+
+* Change name of the rejects folder within each media folder to "repaired"
+
+* Eliminate the menu item Media > Repair.  The multi-purpose repair_file function in repair_media.py will be broken up to handle more specific cases.
+
+* Add menu items Media > Rotate CW and Media Rotate CCW.  These will be associated with new functionality in repair_media.py that will modify the exif orientation tag to achieve a 90 degree clockwise or counterclockwie rottion.rotation
+
+Add a menu item 
+
+* 
+
+* 
