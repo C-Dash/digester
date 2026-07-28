@@ -13,7 +13,7 @@ Accepted formats
 
 Rejection criteria
 ------------------
-- File size > 100 MB
+- File size > 100 MB (JPEG/TIFF) or > 200 MB (PDF)
 - Width × Height > 108 megapixels
 - Wrong colour mode
 - Unreadable / corrupt file
@@ -42,6 +42,7 @@ from .exiftool_util import read_tags
 # ---------------------------------------------------------------------------
 
 _MAX_FILE_MB = 100.0
+_MAX_PDF_MB = 200.0
 _MAX_MEGAPIXELS = 108_000_000   # 108 MP
 _TIFF_LZW = 5                   # TIFF compression tag value for LZW
 
@@ -95,7 +96,7 @@ def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
         )
         if has_pdfa_ns and has_conformance:
             return True, "PDF/A conformance marker found", "PDF/A"
-        return False, "Reject:PDF/A conformance marker not found in XMP metadata", "PDF"
+        return False, "Non-archival PDF", "PDF"
     except Exception as exc:
         return False, f"PDF error: {exc}", "PDF"
 
@@ -145,8 +146,9 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     try:
         mb = filepath.stat().st_size / (1024 * 1024)
         props["file_size_mb"] = mb
-        if mb > _MAX_FILE_MB:
-            props["qa_note"] = f"File too large: {mb:.1f} MB (limit {_MAX_FILE_MB} MB)"
+        max_mb = _MAX_PDF_MB if suffix == ".pdf" else _MAX_FILE_MB
+        if mb > max_mb:
+            props["qa_note"] = f"File too large: {mb:.1f} MB (limit {max_mb} MB)"
             return False, props
     except OSError as exc:
         props["qa_note"] = f"Cannot read file: {exc}"
@@ -158,7 +160,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         props["qa_note"] = msg
         props["format"]  = flavor
         if not ok: 
-            props["repair_issues"].append("not_pdfa")
+            props["repair_issues"].append("Reject")
             ok = False
         # Extract creation date and page count from PDF metadata.
         try:

@@ -78,11 +78,11 @@ def test_tiff_multiframe_rejected_first_issue(tmp_path):
 
 # ------------------------------------------------------------------------ PDF
 
-def test_plain_pdf_flags_not_pdfa(tmp_path):
+def test_plain_pdf_flags_reject(tmp_path):
     p = make_pdf(tmp_path / "a.pdf", pages=2)
     accepted, props = screen_file(p)
     assert accepted is False
-    assert "not_pdfa" in props["repair_issues"]
+    assert "Reject" in props["repair_issues"]
     assert props["pdf_pages"] == 2
 
 

@@ -117,7 +117,7 @@ def repair_file(
             warn += f" [remove failed: {exc}]"
         return False, msg + warn
 
-    if "not_pdfa" in issues:
+    if "reject" in issues:
         msg = "Cannot repair non-PDF/A — manual conversion required"
         warn = _append_rejects_csv(catalog_path, filepath, issues, msg)
         try:
