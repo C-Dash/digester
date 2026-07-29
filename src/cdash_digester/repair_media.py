@@ -100,7 +100,7 @@ def repair_file(
     if not issues:
         return True, "No issues to repair"
 
-    orig_dir = filepath.parent / "rejects" 
+    orig_dir = filepath.parent / "repaired" 
     orig_dir.mkdir(parents=True, exist_ok=True)
 
     try:

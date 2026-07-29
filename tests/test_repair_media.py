@@ -44,7 +44,7 @@ def test_repair_16bit_to_grayscale(tmp_path):
 def test_repair_backs_up_original(tmp_path):
     p = make_tiff(tmp_path / "a.tif", "RGBA")
     repair_file(p, ["rgba"])
-    assert (tmp_path / "rejects" / "a.tif").exists()
+    assert (tmp_path / "repaired" / "a.tif").exists()
 
 
 def test_repair_multiframe_refused_and_removed(tmp_path):
@@ -53,8 +53,8 @@ def test_repair_multiframe_refused_and_removed(tmp_path):
     ok, msg = repair_file(p, ["multiframe_tiff"])
     assert ok is False
     assert "multi-frame" in msg.lower()
-    # Original is backed up to rejects/ and the working copy removed.
-    assert (tmp_path / "rejects" / "a.tif").exists()
+    # Original is backed up to repaired/ and the working copy removed.
+    assert (tmp_path / "repaired" / "a.tif").exists()
     assert not p.exists()
 
 

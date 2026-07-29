@@ -84,6 +84,8 @@ class _Worker(QThread):
                 )
             elif op == "repair_media":
                 self.digester.repair_media_files(self.kwargs["media_ids"])
+            elif op == "reject_media":
+                self.digester.reject_media_files(self.kwargs["media_ids"])
             elif op == "purge_caches":
                 self.digester.purge_caches()
         except Exception as exc:
@@ -292,6 +294,11 @@ class MainWindow(QMainWindow):
         self._act_repair.setEnabled(False)
         media_menu.addAction(self._act_repair)
 
+        self._act_reject = QAction("Reject Selected Media", self)
+        self._act_reject.triggered.connect(self._reject_selected_media)
+        self._act_reject.setEnabled(False)
+        media_menu.addAction(self._act_reject)
+
         # --- Digester ---
         digester_menu = mb.addMenu("Digester")
 
@@ -359,7 +366,7 @@ class MainWindow(QMainWindow):
         self._reload_folders()
         for act in (self._act_init, self._act_status,
                     self._act_purge_cache, self._act_val_folder,
-                    self._act_assign, self._act_repair):
+                    self._act_assign, self._act_repair, self._act_reject):
             act.setEnabled(True)
         self._sync_csv_enabled()   # CSV stays dim until the batch is ready
 
@@ -509,6 +516,43 @@ class MainWindow(QMainWindow):
         self._run("repair_media", on_finish=self._reload_after_folder_scan,
                   media_ids=repairable_ids)
 
+    @Slot()
+    def _reject_selected_media(self):
+        if not self.digester or not self.digester.is_open:
+            return
+
+        media_ids = self.media_table.selected_media_ids()
+        if not media_ids:
+            QMessageBox.information(
+                self,
+                "No Selection",
+                "Select one or more media files first.",
+            )
+            return
+
+        rejectable_ids = self.digester.rejectable_media_ids(media_ids)
+        skipped = len(media_ids) - len(rejectable_ids)
+
+        if not rejectable_ids:
+            QMessageBox.information(
+                self,
+                "No Reject-Flagged Media",
+                "None of the selected media files are flagged Reject.",
+            )
+            return
+
+        self.console.append_message(
+            f"Rejecting {len(rejectable_ids)} selected media file(s)...",
+            "info",
+        )
+        if skipped:
+            self.console.append_message(
+                f"Skipping {skipped} selected file(s) not flagged Reject.",
+                "info",
+            )
+        self._run("reject_media", on_finish=self._reload_after_folder_scan,
+                  media_ids=rejectable_ids)
+
     # --------------------------------------------------------------- helpers
 
     def _reload_folders(self):
@@ -543,7 +587,8 @@ class MainWindow(QMainWindow):
         self.folder_pane.setEnabled(not busy)
         for act in (self._act_choose, self._act_init,
                     self._act_status, self._act_purge_cache,
-                    self._act_val_folder, self._act_assign, self._act_repair):
+                    self._act_val_folder, self._act_assign, self._act_repair,
+                    self._act_reject):
             act.setEnabled(not busy)
         # CSV is special: disabled while busy, and otherwise only enabled when
         # the batch ready status is True (not blanket-enabled with the rest).

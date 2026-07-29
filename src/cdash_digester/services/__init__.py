@@ -11,9 +11,10 @@ from .screening import ScreeningService
 from .scanning import ScanService
 from .assignment import AssignmentService
 from .repair import RepairService
+from .reject import RejectService
 from .export import CatalogExportService
 
 __all__ = [
     "ValidationService", "ScreeningService", "ScanService",
-    "AssignmentService", "RepairService", "CatalogExportService",
+    "AssignmentService", "RepairService", "RejectService", "CatalogExportService",
 ]

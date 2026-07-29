@@ -35,7 +35,7 @@ from .cdash_objects import BatchDB, parse_batch_name
 from .validator import CDASHValidator
 from .services import (
     ScanService, ValidationService, ScreeningService,
-    AssignmentService, RepairService, CatalogExportService,
+    AssignmentService, RepairService, RejectService, CatalogExportService,
 )
 
 
@@ -55,6 +55,7 @@ class Digester:
         self._scan = ScanService(self)
         self._assignment = AssignmentService(self)
         self._repair = RepairService(self)
+        self._reject = RejectService(self)
         self._export = CatalogExportService(self)
 
     # ------------------------------------------------------------------ paths
@@ -66,6 +67,10 @@ class Digester:
     @property
     def media_path(self) -> Path:
         return self.batch_path / "media"
+
+    @property
+    def rejects_path(self) -> Path:
+        return self.batch_path / "rejects"
 
     @property
     def db_path(self) -> Path:
@@ -163,6 +168,14 @@ class Digester:
     def repairable_media_ids(self, media_ids: List[int]) -> List[int]:
         """Subset of media_ids that have recorded repair issues."""
         return self._repair.repairable_media_ids(media_ids)
+
+    def reject_media_files(self, media_ids: List[int]):
+        """Move selected Reject-flagged media files to the rejects/ archive."""
+        self._reject.reject_media_files(media_ids)
+
+    def rejectable_media_ids(self, media_ids: List[int]) -> List[int]:
+        """Subset of media_ids flagged Reject."""
+        return self._reject.rejectable_media_ids(media_ids)
 
     def export_csv(self):
         """Export batch.csv, folder.csv, place.csv, document.csv, media.csv."""
