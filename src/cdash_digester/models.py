@@ -131,7 +131,8 @@ class Media(Row):
     file_size_mb: Optional[float] = None
     pixel_width: Optional[int] = None
     pixel_height: Optional[int] = None
-    format_note: Optional[str] = None
+    format: Optional[str] = None
+    format_issues: Optional[str] = None
     repair_issues: Optional[str] = None
     ready: bool = False
-    notes: Optional[str] = None
+    filename_issues: Optional[str] = None

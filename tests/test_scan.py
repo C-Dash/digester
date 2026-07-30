@@ -61,6 +61,31 @@ def test_scan_all_media_ready_and_folder_ready(scanned):
     assert folder["media_ready"] is True
 
 
+def test_scan_format_rejected_media_not_ready_despite_valid_name(make_batch):
+    """A format-only rejection (no name/place problem) must still leave the
+    media row not-ready. Regression test: media_ready used to be computed as
+    `not notes_parts`, which stayed empty for a purely format-related issue
+    once qa_note stopped being folded into notes_parts."""
+    root = make_batch("CDB260430-Test_batch")
+    folder = root / "media" / "F1-Main-OF101"
+    folder.mkdir(parents=True)
+    make_tiff(folder / "Main_0001p0001-VE-OP55.tif", "RGBA", compression="tiff_lzw")
+
+    validator = FakeValidator(folders={101: "Main St Folder"},
+                              places={55: place_props("Main Place")})
+    d = Digester(root, log=lambda *a, **k: None)
+    d.load_or_initialize()
+    d._validator = validator
+    d.scan_batch()
+
+    rows = d.db.get_media_for_folder(101)
+    assert len(rows) == 1
+    assert rows[0]["ready"] is False
+    assert rows[0]["filename_issues"] == ""   # name/place parsed fine
+    assert "Flatten" in rows[0]["repair_issues"]
+    d.close()
+
+
 def test_scan_populates_caches(scanned):
     d, _ = scanned
     assert d.db.get_folder_cache(101)["cdash_folder_name"] == "Main St Folder"
@@ -145,14 +170,14 @@ def test_scan_flags_place_not_associated_with_folder(make_batch):
     rows = _scan_one_file_with_item_sets(make_batch, item_set_ids="999")
     assert len(rows) == 1
     assert rows[0]["ready"] is False
-    assert rows[0]["notes"].startswith(PLACE_FOLDER_MISMATCH_NOTE)
+    assert rows[0]["filename_issues"].startswith(PLACE_FOLDER_MISMATCH_NOTE)
 
 
 def test_scan_accepts_place_associated_with_folder(make_batch):
     rows = _scan_one_file_with_item_sets(make_batch, item_set_ids="101")
     assert len(rows) == 1
     assert rows[0]["ready"] is True
-    assert PLACE_FOLDER_MISMATCH_NOTE not in (rows[0]["notes"] or "")
+    assert PLACE_FOLDER_MISMATCH_NOTE not in (rows[0]["filename_issues"] or "")
 
 
 def test_assign_rejects_place_not_associated(scanned):
@@ -183,7 +208,7 @@ def test_assign_preserves_media_status_and_notes(scanned):
 
     row = d.db.get_media(mid)
     assert row["ready"] is False                          # status untouched
-    assert row["notes"] == "Format rejected: something"   # notes untouched
+    assert row["filename_issues"] == "Format rejected: something"   # untouched
     assert row["doc_item_id"] is not None                 # but metadata applied
 
 

@@ -59,7 +59,7 @@ def test_clear_working_tables_preserves_caches(db):
     db.insert_media(None, 101, "a.tif", "media/a.tif")
     db.upsert_folder_cache(101, "Main", 1, "valid")
     db.upsert_place_cache(55, place_props("X"), "valid")
-    db.upsert_file_cache("media/a.tif", 10, 20, True, {"qa_note": "OK"})
+    db.upsert_file_cache("media/a.tif", 10, 20, True, {"format_issues": ["OK"]})
 
     db.clear_working_tables()
 
@@ -81,7 +81,7 @@ def test_clear_caches_empties_caches_only(db):
                      os_folder_name="F1-Main-OF101")
     db.upsert_folder_cache(101, "Main", 1, "valid")
     db.upsert_place_cache(55, place_props("X"), "valid")
-    db.upsert_file_cache("media/a.tif", 10, 20, True, {"qa_note": "OK"})
+    db.upsert_file_cache("media/a.tif", 10, 20, True, {"format_issues": ["OK"]})
 
     removed = db.clear_caches()
 
@@ -129,13 +129,14 @@ def test_place_cache_roundtrip_all_keys(db):
 def test_file_cache_roundtrip_and_accepted_bool(db):
     props = {"file_size_mb": 1.0, "pixel_width": 8, "pixel_height": 8,
              "format": "RGB", "capture_date": "2026-01-01", "date_source": "fs",
-             "qa_note": "OK", "repair_issues": [], "pdf_pages": None}
+             "format_issues": ["OK"], "repair_issues": [], "pdf_pages": None}
     db.upsert_file_cache("media/a.tif", 123, 456, True, props)
     row = db.get_file_cache("media/a.tif")
     assert row["file_size_bytes"] == 123
     assert row["mtime_ns"] == 456
     assert row["accepted"] is True
     assert row["format"] == "RGB"
+    assert row["format_issues"] == "OK"
 
 
 def test_file_cache_repair_issues_joined(db):
@@ -145,15 +146,15 @@ def test_file_cache_repair_issues_joined(db):
 
 
 def test_file_cache_path_rekey(db):
-    db.upsert_file_cache("media/old.tif", 1, 2, True, {"qa_note": "OK"})
+    db.upsert_file_cache("media/old.tif", 1, 2, True, {"format_issues": ["OK"]})
     db.update_file_cache_path("media/old.tif", "media/new.tif")
     assert db.get_file_cache("media/old.tif") is None
     assert db.get_file_cache("media/new.tif")["accepted"] is True
 
 
 def test_file_cache_rekey_drops_stale_target(db):
-    db.upsert_file_cache("media/old.tif", 1, 2, True, {"qa_note": "OK"})
-    db.upsert_file_cache("media/new.tif", 9, 9, False, {"qa_note": "stale"})
+    db.upsert_file_cache("media/old.tif", 1, 2, True, {"format_issues": ["OK"]})
+    db.upsert_file_cache("media/new.tif", 9, 9, False, {"format_issues": ["stale"]})
     db.update_file_cache_path("media/old.tif", "media/new.tif")
     # The stale target row was replaced by the re-keyed one.
     assert db.get_file_cache("media/new.tif")["accepted"] is True

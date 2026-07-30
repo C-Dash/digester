@@ -1,20 +1,31 @@
 """
 CDASH Repair Media Module
 - Takes a media file path and a list of issues as arguments.
-- The original file is backed up to a Rejects/orig/ subfolder.
-- Repairs are applied with Pillow and the result is saved back to the
-  original filepath (overwriting it).
+- If the repair succeeds, the original file is backed up to a "repaired"
+  subfolder inside the file's own media folder, and the repaired image is
+  saved back over the original filepath (overwriting it). If the repair is
+  refused or reverted, the original file is left completely untouched —
+  nothing is backed up or deleted.
 
 Issues and Remedies
-- rgba -> convert to rgb
-- la   -> convert grayscale+alpha to 8-bit grayscale
-- i;16 -> convert 16-bit grayscale to 8-bit grayscale
-- iphone_vert -> Rotate based on EXIF orientation; default 90 degrees CCW
+- flatten      -> drop the alpha/16-bit channel (RGBA/LA/I;16) to a clean mode
+- compress_lzw -> re-save with LZW compression
+- check_mbs    -> after flatten/compress_lzw, re-check size against the
+                  prescreener's file-size limit; only commit the repair if
+                  it now fits, otherwise leave the file untouched
+- reject       -> not repairable; refused with a message pointing at the
+                  separate Reject action (services/reject.py), which is the
+                  only thing that moves/removes the file
 
+The EXIF-orientation rotation helpers below (_ORIENTATION_ROTATION,
+_DEFAULT_VERT_ROTATION, _get_exif_orientation) are not currently wired to any
+repair_issues code — iphone_vert was retired from the prescreener — but are
+kept for the planned Media > Rotate CW / Rotate CCW menu actions.
 """
 
 import argparse
 import csv
+import io
 import shutil
 import sys
 from pathlib import Path
@@ -22,6 +33,7 @@ from typing import Iterable, List, Tuple
 
 from PIL import Image
 
+from . import prescreener
 from .exiftool_util import read_tags
 
 # EXIF Orientation (numeric) → Pillow rotation angle in degrees CCW with expand=True
@@ -55,14 +67,16 @@ def parse_repair_issues(issues: str | Iterable[str] | None) -> List[str]:
     return parsed
 
 
-def _append_rejects_csv(
+def _append_repair_reject_csv(
     catalog_path: Path, filepath: Path, issues: List[str], action: str
 ) -> str:
-    """Append one row to Catalog/rejects.csv. Returns a warning string on failure."""
+    """Append one row to catalog/repair_reject.csv — the shared log for both
+    repair attempts/refusals (repair_file) and reject moves (RejectService).
+    Returns a warning string on failure."""
     if catalog_path is None:
         return ""
     try:
-        csv_path = catalog_path / "rejects.csv"
+        csv_path = catalog_path / "repair_reject.csv"
         write_header = not csv_path.exists()
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
@@ -76,7 +90,7 @@ def _append_rejects_csv(
             ])
         return ""
     except Exception as exc:
-        return f" [rejects.csv write failed: {exc}]"
+        return f" [repair_reject.csv write failed: {exc}]"
 
 
 def _get_exif_orientation(filepath: Path):
@@ -91,43 +105,21 @@ def repair_file(
 ) -> Tuple[bool, str]:
     """Apply repairs to filepath for the given issue codes.
 
-    Creates <filepath.parent>/Rejects/orig/ and .../repaired/ as needed.
-    Copies the original to orig/ then writes the repaired image to repaired/.
-    If catalog_path is provided, appends an entry to catalog_path/rejects.txt.
+    The original is backed up to <filepath.parent>/repaired/ and the repaired
+    image written back over filepath, but only once every check has passed —
+    a Reject-flagged file or a Check MBs repair that's still oversized after
+    compression leaves the original completely untouched. If catalog_path is
+    provided, appends an entry to catalog_path/repair_reject.csv either way.
     Returns (success, message).
     """
     issues = parse_repair_issues(issues)
     if not issues:
         return True, "No issues to repair"
 
-    orig_dir = filepath.parent / "repaired" 
-    orig_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        shutil.copy2(str(filepath), str(orig_dir / filepath.name))
-    except Exception as exc:
-        return False, f"Cannot back up original: {exc}"
-
-    if "multiframe_tiff" in issues:
-        msg = "Cannot repair multi-frame TIFF — manual intervention required"
-        warn = _append_rejects_csv(catalog_path, filepath, issues, msg)
-        try:
-            filepath.unlink()
-        except Exception as exc:
-            warn += f" [remove failed: {exc}]"
-        return False, msg + warn
-
-    if "reject" in issues:
-        if filepath.suffix.lower() in (".tif", ".tiff"):
-            msg = "Cannot repair multi-frame TIFF — manual intervention required"
-        else:
-            msg = "Cannot repair non-PDF/A — manual conversion required"
-        warn = _append_rejects_csv(catalog_path, filepath, issues, msg)
-        try:
-            filepath.unlink()
-        except Exception as exc:
-            warn += f" [remove failed: {exc}]"
-        return False, msg + warn
+    if "reject" in issues or "multiframe_tiff" in issues:
+        msg = ("Cannot repair — file is flagged Reject. Use the Reject "
+               "action to move it out of the batch.")
+        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
 
     try:
         raw_img = Image.open(filepath)
@@ -136,59 +128,83 @@ def repair_file(
         raw_img.close()
     except Exception as exc:
         msg = f"Cannot open image: {exc}"
-        return False, msg + _append_rejects_csv(catalog_path, filepath, issues, msg)
+        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
 
     applied = []
 
-    # 1. Mode conversions (must happen before rotation so rotate works on a clean mode)
-    if "rgba" in issues:
+    # 1. Flatten -> drop the alpha/16-bit channel to a clean mode
+    if "flatten" in issues:
         if img.mode == "RGBA":
             background = Image.new("RGB", img.size, (255, 255, 255))
             background.paste(img, mask=img.split()[3])
             img = background
             applied.append("rgba->rgb")
-
-    if "la" in issues:
-        if img.mode == "LA":
+        elif img.mode == "LA":
             background = Image.new("L", img.size, 255)
             background.paste(img.convert("L"), mask=img.split()[1])
             img = background
             applied.append("la->l")
-
-    if "i;16" in issues:
-        if img.mode == "I;16":
+        elif img.mode == "I;16":
             # PIL requires an intermediate "I" (32-bit int) step to correctly
             # scale 16-bit values down to the 0-255 range.
             img = img.convert("I").convert("L")
             applied.append("i;16->l")
 
-    # 2. iphone_vert -> rotate to landscape orientation
-    if "iphone_vert" in issues:
-        orientation = _get_exif_orientation(filepath)
-        angle = _ORIENTATION_ROTATION.get(orientation, _DEFAULT_VERT_ROTATION)
-        img = img.rotate(angle, expand=True)
-        applied.append(f"rotated {angle} degrees CCW")
-
-    # 3. wrong_compression -> LZW applied on save (no pixel transform needed)
-    if "wrong_compression" in issues:
+    # 2. compress_lzw -> LZW applied on save (no pixel transform needed)
+    if "compress_lzw" in issues:
         applied.append("lzw compression applied")
 
     suffix = filepath.suffix.lower()
+
+    # 3. check_mbs -> render to a buffer first and re-check size before
+    # committing anything. Check MBs is TIFF-only by construction (it's only
+    # ever paired with Compress LZW for an uncompressed oversized TIFF).
+    buf = None
+    if "check_mbs" in issues:
+        buf = io.BytesIO()
+        try:
+            img.save(buf, format="TIFF", compression="tiff_lzw")
+        except Exception as exc:
+            msg = f"Cannot save repaired image: {exc}"
+            return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+        size_mb = buf.tell() / (1024 * 1024)
+        if size_mb > prescreener._MAX_FILE_MB:
+            msg = (
+                f"Still {size_mb:.1f} MB after compression "
+                f"(limit {prescreener._MAX_FILE_MB} MB) — cannot repair; "
+                f"use the Reject action."
+            )
+            return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+        applied.append(
+            f"size now {size_mb:.1f} MB, within {prescreener._MAX_FILE_MB} MB limit"
+        )
+
+    # Only now commit: back up the original, then write the repaired image.
+    orig_dir = filepath.parent / "repaired"
+    orig_dir.mkdir(parents=True, exist_ok=True)
     try:
-        if suffix in (".tif", ".tiff"):
+        shutil.copy2(str(filepath), str(orig_dir / filepath.name))
+    except Exception as exc:
+        return False, f"Cannot back up original: {exc}"
+
+    try:
+        if buf is not None:
+            with open(filepath, "wb") as f:
+                f.write(buf.getvalue())
+        elif suffix in (".tif", ".tiff"):
             img.save(str(filepath), compression="tiff_lzw")
         else:
             img.save(str(filepath))
     except Exception as exc:
         msg = f"Cannot save repaired image: {exc}"
-        return False, msg + _append_rejects_csv(catalog_path, filepath, issues, msg)
+        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
 
     msg = "Repaired: " + "|".join(applied)
-    return True, msg + _append_rejects_csv(catalog_path, filepath, issues, msg)
+    return True, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
 
 
 def main():
-    # python -m cdash_digester.repair_media ".\CDB260430-Test_batch\media\F6-Mass_Ave_Quincy_Central_Sqs_Views_Both_Sides-OF43111\Mass_Ave_0027p0001-VE-OP43296.tif" rgba iphone_vert
+    # python -m cdash_digester.repair_media ".\CDB260430-Test_batch\media\F6-Mass_Ave_Quincy_Central_Sqs_Views_Both_Sides-OF43111\Mass_Ave_0027p0001-VE-OP43296.tif" flatten compress_lzw
 
     parser = argparse.ArgumentParser(
         description="Repair a media file by applying fixes for known issues."
@@ -196,7 +212,7 @@ def main():
     parser.add_argument("filepath", help="Path to the media file to repair")
     parser.add_argument(
         "issues", nargs="+",
-        help="Issue codes to fix (e.g. rgba iphone_vert)"
+        help="Issue codes to fix (e.g. flatten compress_lzw)"
     )
     args = parser.parse_args()
 

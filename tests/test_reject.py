@@ -88,7 +88,7 @@ def test_reject_removes_now_empty_source_folder(make_batch):
     d.close()
 
 
-def test_reject_appends_rejects_csv_row(make_batch):
+def test_reject_appends_repair_reject_csv_row(make_batch):
     def build(folder):
         make_multiframe_tiff(folder / "Main_0001p0001-VE-OP55.tif", frames=2)
 
@@ -97,13 +97,13 @@ def test_reject_appends_rejects_csv_row(make_batch):
 
     d.reject_media_files([bad_row["media_id"]])
 
-    csv_path = d.catalog_path / "rejects.csv"
+    csv_path = d.catalog_path / "repair_reject.csv"
     with open(csv_path, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     assert len(rows) == 1
     assert rows[0]["Filename"] == bad_row["filename"]
     assert rows[0]["Repair_Action"] == "Rejected"
-    assert rows[0]["Repair_Issues"] == bad_row["format_note"]
+    assert rows[0]["Repair_Issues"] == bad_row["format"]
     d.close()
 
 

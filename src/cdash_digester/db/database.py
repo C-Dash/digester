@@ -91,10 +91,11 @@ _SCHEMA = [
         file_size_mb REAL,
         pixel_width  INTEGER,
         pixel_height INTEGER,
-        format_note  TEXT,
+        format         TEXT,
+        format_issues  TEXT,
         repair_issues TEXT,
         ready        INTEGER DEFAULT 0,
-        notes        TEXT
+        filename_issues TEXT
     )""",
     # ------ folder cache (persists across scans; validator results)
     """CREATE TABLE IF NOT EXISTS cdash_folder_cache (
@@ -132,7 +133,7 @@ _SCHEMA = [
         format          TEXT,
         capture_date    TEXT,
         date_source     TEXT,
-        qa_note         TEXT,
+        format_issues   TEXT,
         repair_issues   TEXT,
         pdf_pages       INTEGER,
         fetched_date    TEXT

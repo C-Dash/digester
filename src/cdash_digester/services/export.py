@@ -204,7 +204,7 @@ class CatalogExportService:
             w = csv.DictWriter(f, fieldnames=[
                 "ResourceTemplate", "Title", "identifier",
                 "Relation", "type", "Source", "number", "dateAccepted",
-                "format_note", "doc_pages",
+                "format_issues", "doc_pages",
             ])
             w.writeheader()
             for m in rows:
@@ -217,6 +217,6 @@ class CatalogExportService:
                     "Source":           self._dig.batch_path.name + "/" + m["filepath"].replace("\\", "/"),
                     "number":           m["page_num"],
                     "dateAccepted":     m["capture_date"],
-                    "format_note":      m["format_note"] or "",
+                    "format_issues":    m["format_issues"] or "",
                     "doc_pages":        m["doc_pages"] or "",
                 })

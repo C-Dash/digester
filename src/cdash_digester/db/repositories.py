@@ -301,17 +301,18 @@ class MediaRepo(_Repo):
                      page_num: int = 0,
                      capture_date: str = None, file_size_mb: float = None,
                      pixel_width: int = None, pixel_height: int = None,
-                     format_note: str = None, repair_issues: str = "",
-                     ready: bool = False, notes: str = "") -> int:
+                     format: str = None, format_issues: str = "",
+                     repair_issues: str = "",
+                     ready: bool = False, filename_issues: str = "") -> int:
         cur = self._con.execute(
             """INSERT INTO cdash_media
                (doc_item_id, item_set_id, filename, batch_media_id, filepath,
                 page_num, capture_date, file_size_mb, pixel_width, pixel_height,
-                     format_note, repair_issues, ready, notes)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     format, format_issues, repair_issues, ready, filename_issues)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (doc_item_id, item_set_id, filename, batch_media_id, filepath,
                  page_num, capture_date, file_size_mb, pixel_width, pixel_height,
-                 format_note, repair_issues, int(ready), notes),
+                 format, format_issues, repair_issues, int(ready), filename_issues),
         )
         self._con.commit()
         return cur.lastrowid
@@ -331,29 +332,10 @@ class MediaRepo(_Repo):
             (item_set_id,),
         ).fetchall()
 
-    def update_media_prescreener_props(self, media_id: int,
-                                       file_size_mb: float,
-                                       pixel_width: int,
-                                       pixel_height: int,
-                                       format_note: str,
-                                       capture_date: str,
-                                       date_source: str = None,
-                                       repair_issues: str = ""):
+    def set_media_status(self, media_id: int, ready: bool, filename_issues: str = ""):
         self._con.execute(
-            """UPDATE cdash_media
-               SET file_size_mb=?, pixel_width=?, pixel_height=?,
-                   format_note=?, capture_date=?, date_source=?,
-                   repair_issues=?
-               WHERE media_id=?""",
-            (file_size_mb, pixel_width, pixel_height,
-             format_note, capture_date, date_source, repair_issues, media_id),
-        )
-        self._con.commit()
-
-    def set_media_status(self, media_id: int, ready: bool, notes: str = ""):
-        self._con.execute(
-            "UPDATE cdash_media SET ready=?, notes=? WHERE media_id=?",
-            (int(ready), notes, media_id),
+            "UPDATE cdash_media SET ready=?, filename_issues=? WHERE media_id=?",
+            (int(ready), filename_issues, media_id),
         )
         self._con.commit()
 
@@ -449,7 +431,7 @@ class CacheRepo(_Repo):
             """INSERT INTO cdash_file_cache
                    (filepath, file_size_bytes, mtime_ns, accepted, file_size_mb,
                     pixel_width, pixel_height, format, capture_date, date_source,
-                    qa_note, repair_issues, pdf_pages, fetched_date)
+                    format_issues, repair_issues, pdf_pages, fetched_date)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(filepath) DO UPDATE SET
                    file_size_bytes=excluded.file_size_bytes,
@@ -461,7 +443,7 @@ class CacheRepo(_Repo):
                    format=excluded.format,
                    capture_date=excluded.capture_date,
                    date_source=excluded.date_source,
-                   qa_note=excluded.qa_note,
+                   format_issues=excluded.format_issues,
                    repair_issues=excluded.repair_issues,
                    pdf_pages=excluded.pdf_pages,
                    fetched_date=excluded.fetched_date""",
@@ -469,7 +451,8 @@ class CacheRepo(_Repo):
              props.get("file_size_mb"), props.get("pixel_width"),
              props.get("pixel_height"), props.get("format"),
              props.get("capture_date"), props.get("date_source"),
-             props.get("qa_note"), ", ".join(props.get("repair_issues", [])),
+             "|".join(props.get("format_issues", [])),
+             ", ".join(props.get("repair_issues", [])),
              props.get("pdf_pages"),
              datetime.now().isoformat(timespec="seconds")),
         )

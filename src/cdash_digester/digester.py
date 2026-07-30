@@ -205,9 +205,9 @@ class Digester:
 
     # --------------------------------------------------------------- counts
 
-    def _read_rejects_csv_counts(self) -> tuple:
-        """Return (total_rows, repaired_rows) from Catalog/rejects.csv."""
-        csv_path = self.catalog_path / "rejects.csv"
+    def _read_repair_reject_csv_counts(self) -> tuple:
+        """Return (total_rows, repaired_rows) from catalog/repair_reject.csv."""
+        csv_path = self.catalog_path / "repair_reject.csv"
         try:
             with open(csv_path, newline="", encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
@@ -223,7 +223,7 @@ class Digester:
     def _collect_and_store_counts(self) -> dict:
         """Compute all six counts, persist to DB, and return as a dict."""
         stats = self.db.count_batch_stats()
-        rejects, repaired = self._read_rejects_csv_counts()
+        rejects, repaired = self._read_repair_reject_csv_counts()
         stats["rejects"]  = rejects
         stats["repaired"] = repaired
         self.db.update_batch_counts(

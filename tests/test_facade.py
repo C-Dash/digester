@@ -51,7 +51,7 @@ def test_repairable_media_ids_filters_by_issues(opened):
 def test_purge_caches_empties_the_caches(opened):
     d = opened
     d.db.upsert_folder_cache(101, "Main", 1, "valid")
-    d.db.upsert_file_cache("media/a.tif", 10, 20, True, {"qa_note": "OK"})
+    d.db.upsert_file_cache("media/a.tif", 10, 20, True, {"format_issues": ["OK"]})
     d.purge_caches()
     assert d.db.get_folder_cache(101) is None
     assert d.db.get_file_cache("media/a.tif") is None

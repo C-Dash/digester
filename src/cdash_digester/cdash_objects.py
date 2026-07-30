@@ -295,12 +295,13 @@ class BatchDB:
     def insert_media(self, doc_item_id, item_set_id, filename, filepath,
                      batch_media_id=None, page_num=0, capture_date=None,
                      file_size_mb=None, pixel_width=None, pixel_height=None,
-                     format_note=None, repair_issues="", ready=False, notes=""):
+                     format=None, format_issues="", repair_issues="",
+                     ready=False, filename_issues=""):
         return self._media.insert_media(doc_item_id, item_set_id, filename,
                                         filepath, batch_media_id, page_num,
                                         capture_date, file_size_mb, pixel_width,
-                                        pixel_height, format_note, repair_issues,
-                                        ready, notes)
+                                        pixel_height, format, format_issues,
+                                        repair_issues, ready, filename_issues)
 
     def get_media(self, media_id):
         return self._media.get_media(media_id)
@@ -308,16 +309,8 @@ class BatchDB:
     def get_media_for_folder(self, item_set_id):
         return self._media.get_media_for_folder(item_set_id)
 
-    def update_media_prescreener_props(self, media_id, file_size_mb,
-                                       pixel_width, pixel_height, format_note,
-                                       capture_date, date_source=None,
-                                       repair_issues=""):
-        self._media.update_media_prescreener_props(
-            media_id, file_size_mb, pixel_width, pixel_height, format_note,
-            capture_date, date_source, repair_issues)
-
-    def set_media_status(self, media_id, ready, notes=""):
-        self._media.set_media_status(media_id, ready, notes)
+    def set_media_status(self, media_id, ready, filename_issues=""):
+        self._media.set_media_status(media_id, ready, filename_issues)
 
     def update_media_filename(self, media_id, filename, filepath):
         self._media.update_media_filename(media_id, filename, filepath)

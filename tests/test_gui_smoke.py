@@ -42,8 +42,8 @@ def test_assign_dialog_count_is_singular_for_one(qtbot):
 
 def _media_row(media_id, filename, ready=True):
     return {"media_id": media_id, "filename": filename, "doc_type_code": "VE",
-            "page_num": 1, "format_note": "RGB", "repair_issues": "",
-            "ready": ready, "notes": ""}
+            "page_num": 1, "format": "RGB", "format_issues": "",
+            "repair_issues": "", "ready": ready, "filename_issues": ""}
 
 
 def _thumb_row(media_id, filename, ready=True):

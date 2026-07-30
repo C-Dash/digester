@@ -42,7 +42,8 @@ class ScreeningService:
                 "format":        cached["format"],
                 "capture_date":  cached["capture_date"],
                 "date_source":   cached["date_source"],
-                "qa_note":       cached["qa_note"],
+                "format_issues": (cached["format_issues"].split("|")
+                                   if cached["format_issues"] else []),
                 "repair_issues": parse_repair_issues(cached["repair_issues"]),
                 "pdf_pages":     cached["pdf_pages"],
             }

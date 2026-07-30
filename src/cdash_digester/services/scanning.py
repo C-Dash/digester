@@ -212,9 +212,9 @@ class FolderScanner:
         # 1. Format screening (cache → prescreener)
         accepted, props = dig._screening.screen(filepath)
         repair_issues = ", ".join(props.get("repair_issues", []))
+        format_issues = "|".join(props.get("format_issues", []))
         if not accepted:
-            notes_parts.append(props.get("qa_note", "Format rejected"))
-            dig.log(f"    Format issue: {props.get('qa_note')}", "warning")
+            dig.log(f"    Format issue: {format_issues}", "warning")
 
         # 2. Name parsing
         parsed = parse_media_name(filepath.stem)
@@ -231,10 +231,11 @@ class FolderScanner:
                 file_size_mb=props.get("file_size_mb"),
                 pixel_width=props.get("pixel_width"),
                 pixel_height=props.get("pixel_height"),
-                format_note=props.get("format"),
+                format=props.get("format"),
+                format_issues=format_issues,
                 repair_issues=repair_issues,
                 ready=False,
-                notes=", ".join(notes_parts),
+                filename_issues=", ".join(notes_parts),
             )
             dig.log("    Not-ready name.", "info")
             return
@@ -272,7 +273,7 @@ class FolderScanner:
         else:
             self.slug_place_tracker[place_slug] = place_id
 
-        media_ready = not notes_parts
+        media_ready = accepted and not notes_parts
 
         # 4. Doc tracking / creation
         if doc_index not in self.doc_tracker:  # New Document
@@ -317,7 +318,7 @@ class FolderScanner:
                     filepath=rel_path,
                     repair_issues=repair_issues,
                     ready=False,
-                    notes=msg,
+                    filename_issues=msg,
                 )
                 return
 
@@ -369,8 +370,9 @@ class FolderScanner:
             file_size_mb=props.get("file_size_mb"),
             pixel_width=props.get("pixel_width"),
             pixel_height=props.get("pixel_height"),
-            format_note=props.get("format"),
+            format=props.get("format"),
+            format_issues=format_issues,
             repair_issues=repair_issues,
             ready=media_ready,
-            notes=", ".join(notes_parts),
+            filename_issues=", ".join(notes_parts),
         )

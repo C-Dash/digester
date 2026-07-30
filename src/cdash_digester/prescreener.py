@@ -2,8 +2,8 @@
 CDASH Media Prescreener Module
 
 Checks each media file against acceptance criteria. Returns True (accepted)
-or False (rejected). Rejects are moved to Rejects/<FolderName>/ and logged
-to rejects.csv.
+or False (rejected). screen_file() is stateless — the scan pipeline
+(services/scanning.py) handles persisting results and moving rejected files.
 
 Accepted formats
 ----------------
@@ -13,28 +13,38 @@ Accepted formats
 
 Rejection criteria
 ------------------
-- File size > 100 MB (JPEG/TIFF) or > 200 MB (PDF)
+- File size > 100 MB (JPEG/TIFF) or > 200 MB (PDF) — unless it's an
+  uncompressed TIFF, which is flagged "Check MBs" instead of rejected
 - Width × Height > 108 megapixels
 - Wrong colour mode
 - Unreadable / corrupt file
-- TIFF with non-LZW compression
-- 16-bit TIFF
+- Multi-frame TIFF
 - PDF without PDF/A-1b XMP marker
+
+Repairable issues (see repair_media.py)
+----------------------------------------
+- "Compress LZW" — TIFF with non-LZW compression
+- "Flatten" — TIFF in RGBA, LA, or I;16 (16-bit grayscale) mode
+- "Check MBs" — oversized uncompressed TIFF, may fit once compressed
+
+Every rejection path sets repair_issues to the exclusive "Reject" code —
+including unreadable/corrupt files (format="Unreadable": unstat-able, won't
+open, won't decode) and not-admissible files with no repair path (unsupported
+suffix, multi-frame TIFF, oversized, over the megapixel limit, wrong JPEG
+mode, 32-bit float TIFF, non-PDF/A) — so nothing screened out is ever left
+without an actionable Reject flag.
 """
 
 import argparse
-import csv
-import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Tuple
+from typing import Tuple
 
 from PIL import Image, UnidentifiedImageError
 from PIL.ExifTags import TAGS
 import fitz  # pymupdf
 
-from .cdash_objects import BatchDB
 from .exiftool_util import read_tags
 
 # ---------------------------------------------------------------------------
@@ -57,12 +67,6 @@ _CLEAN_MODES = {
     ".tiff": {"RGB", "L", "1"},
 }
 
-_REJECTS_FIELDS = [
-    "filename", "filepath", "file_size_mb", "pixel_width", "pixel_height",
-    "format", "capture_date", "date_source", "status", "qa_note",
-]
-
-
 # ---------------------------------------------------------------------------
 # Low-level file screening
 # ---------------------------------------------------------------------------
@@ -74,7 +78,8 @@ def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
     in either element or attribute form, regardless of the namespace prefix
     used by the file.  Accepts PDF/A-1, -2, -3, and -4 at any level.
 
-    flavor is "PDF/A" when the conformance marker is present, "PDF" otherwise.
+    flavor is "PDF/A" when the conformance marker is present, "PDF" when
+    absent, "Unreadable" if the PDF itself can't be opened.
     """
     try:
         doc = fitz.open(str(filepath))
@@ -98,7 +103,7 @@ def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
             return True, "PDF/A conformance marker found", "PDF/A"
         return False, "Non-archival PDF", "PDF"
     except Exception as exc:
-        return False, f"PDF error: {exc}", "PDF"
+        return False, f"PDF error: {exc}", "Unreadable"
 
 
 def screen_file(filepath: Path) -> Tuple[bool, dict]:
@@ -109,7 +114,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     (status, props)
         status : True (accepted) | False (rejected)
         props  : dict with keys file_size_mb, pixel_width, pixel_height,
-                 format, capture_date, qa_note
+                 format, capture_date, format_issues
     """
     props = {
         "file_size_mb":  None,
@@ -118,7 +123,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         "format":        None,
         "capture_date":  None,
         "date_source":   None,
-        "qa_note":       "",
+        "format_issues": [],
         "repair_issues": [],
         "pdf_pages":     None,
     }
@@ -126,11 +131,11 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     suffix = filepath.suffix.lower()
 
     if suffix not in _ACCEPTED_SUFFIXES:
-        props["qa_note"] = f"Unsupported file type: {suffix}"
+        props["format_issues"].append(f"Unsupported file type: {suffix}")
         props["repair_issues"] = ["Reject"]
         return False, props
 
-    # For TIFFs: check compression before the size check so wrong_compression is
+    # For TIFFs: check compression before the size check so Compress LZW is
     # recorded in repair_issues even when the file is also oversized.  PIL.open
     # is lazy here — only the header is read, no pixel decode.
     img = None
@@ -139,28 +144,42 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             img = Image.open(filepath)
             tag_v2 = getattr(img, "tag_v2", {})
             if tag_v2.get(259) != _TIFF_LZW:
-                props["repair_issues"].append("wrong_compression")
+                props["repair_issues"].append("Compress LZW")
         except Exception:
             img = None  # open failure is surfaced in the main image path below
 
-    # File-size check
+    # File-size check. An oversized uncompressed TIFF isn't hard-rejected —
+    # it may still come in under the limit once LZW-compressed, so it's
+    # flagged Check MBs and screening continues. Everything else oversized
+    # (compressed TIFF, JPEG, PDF) is an exclusive Reject.
     try:
         mb = filepath.stat().st_size / (1024 * 1024)
         props["file_size_mb"] = mb
         max_mb = _MAX_PDF_MB if suffix == ".pdf" else _MAX_FILE_MB
         if mb > max_mb:
-            props["qa_note"] = f"File too large: {mb:.1f} MB (limit {max_mb} MB)"
-            return False, props
+            if suffix in (".tif", ".tiff") and "Compress LZW" in props["repair_issues"]:
+                props["repair_issues"].append("Check MBs")
+                props["format_issues"].append(
+                    f"{mb:.1f} MB — exceeds {max_mb} MB limit (uncompressed)"
+                )
+            else:
+                props["format_issues"].append(
+                    f"File too large: {mb:.1f} MB (limit {max_mb} MB)"
+                )
+                props["repair_issues"] = ["Reject"]
+                return False, props
     except OSError as exc:
-        props["qa_note"] = f"Cannot read file: {exc}"
+        props["format_issues"].append(f"Cannot read file: {exc}")
+        props["format"] = "Unreadable"
+        props["repair_issues"] = ["Reject"]
         return False, props
 
     # PDF path
     if suffix == ".pdf":
         ok, msg, flavor = _check_pdf_a1b(filepath)
-        props["qa_note"] = msg
+        props["format_issues"].append(msg)
         props["format"]  = flavor
-        if not ok: 
+        if not ok:
             props["repair_issues"].append("Reject")
             ok = False
         # Extract creation date and page count from PDF metadata.
@@ -192,21 +211,27 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         if img is None:
             img = Image.open(filepath)
     except (UnidentifiedImageError, Exception) as exc:
-        props["qa_note"] = f"Cannot open image: {exc}"
+        props["format_issues"].append(f"Cannot open image: {exc}")
+        props["format"] = "Unreadable"
+        props["repair_issues"] = ["Reject"]
         return False, props
 
     props["format"] = img.mode
     if img.mode not in _CLEAN_MODES.get(suffix, set()):
-        props["repair_issues"].append(img.mode.lower())
+        if suffix in (".tif", ".tiff") and img.mode in ("RGBA", "LA", "I;16"):
+            props["repair_issues"].append("Flatten")
+        else:
+            props["repair_issues"].append(img.mode.lower())
     w, h = img.size
     props["pixel_width"]  = w
     props["pixel_height"] = h
 
     # Megapixel check
     if w * h > _MAX_MEGAPIXELS:
-        props["qa_note"] = (
+        props["format_issues"].append(
             f"Exceeds 108 MP: {w * h / 1_000_000:.1f} MP ({w}×{h})"
         )
+        props["repair_issues"] = ["Reject"]
         return False, props
 
     # EXIF capture date via ExifTool (called once; et_tags reused below)
@@ -224,13 +249,14 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     # Format-specific checks
     if suffix in (".jpg", ".jpeg"):
         if img.mode != "RGB":
-            props["qa_note"] = f"JPEG must be 24-bit RGB; got {img.mode}"
+            props["format_issues"].append(f"JPEG must be 24-bit RGB; got {img.mode}")
+            props["repair_issues"] = ["Reject"]
             return False, props
 
     elif suffix in (".tif", ".tiff"):
         if getattr(img, 'n_frames', 1) > 1:
             props["repair_issues"] = ["Reject"]
-            props["qa_note"] = "REJECT: multiframe-tiff"
+            props["format_issues"].append("Multi-frame TIFF is not accepted")
             return False, props
 
         tag_v2 = getattr(img, "tag_v2", {})
@@ -238,135 +264,35 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
 
         # 32-bit float is non-repairable — return immediately.
         if img.mode == "F":
-            props["qa_note"] = "32-bit float TIFFs are not accepted"
+            props["format_issues"].append("32-bit float TIFFs are not accepted")
+            props["repair_issues"] = ["Reject"]
             return False, props
 
-        # Repairable checks — accumulate qa_parts; wrong_compression was already
-        # added to repair_issues before the size check.
-        qa_parts = []
-
+        # Repairable checks — Compress LZW was already added to repair_issues
+        # before the size check.
         if compression != _TIFF_LZW:
-            qa_parts.append(
+            props["format_issues"].append(
                 f"TIFF must use LZW compression (code {compression} found)"
             )
 
         if img.mode not in ("RGB", "L", "1"):
-            qa_parts.append(
+            props["format_issues"].append(
                 f"TIFF must be 24-bit RGB, 8-bit grayscale, or 1-bit bilevel; got {img.mode}"
             )
 
-        # iPhone portrait: non-normal EXIF Orientation or portrait pixel dimensions.
-        host = et_tags.get("EXIF:HostComputer", "") or ""
-        orientation = et_tags.get("EXIF:Orientation")  # int with -n; 1 = normal
-        if "iphone" in host.lower() and (orientation not in (None, 1) or h > w):
-            props["repair_issues"].append("iphone_vert")
-            qa_parts.append("iphone-vert")
-
         if props["repair_issues"]:
-            props["qa_note"] = "; ".join(qa_parts) if qa_parts else ", ".join(props["repair_issues"])
             return False, props
 
     # All checks passed — force full decode now to catch corrupt files.
     try:
         img.load()
     except Exception as exc:
-        props["qa_note"] = f"Cannot decode image: {exc}"
+        props["format_issues"].append(f"Cannot decode image: {exc}")
+        props["format"] = "Unreadable"
+        props["repair_issues"] = ["Reject"]
         return False, props
 
-    props["qa_note"] = "OK"
     return True, props
-
-
-# ---------------------------------------------------------------------------
-# MediaPrescreener
-# ---------------------------------------------------------------------------
-
-class MediaPrescreener:
-    """Screens all media in a batch and moves rejects."""
-
-    def __init__(self, db: BatchDB, batch_root: Path,
-                 log: Callable[[str, str], None] = None):
-        self.db = db
-        self.batch_root = batch_root
-        self.rejects_root = batch_root / "Rejects"
-        self.log = log or (lambda msg, level: None)
-        self._reject_rows: list = []
-
-    def screen_folder(self, item_set_id: int, folder_path: Path):
-        """Screen every registered media file in one Item Set folder."""
-        self.rejects_root.mkdir(exist_ok=True)
-        reject_folder = self.rejects_root / folder_path.name
-
-        for row in self.db.get_media_for_folder(item_set_id):
-            filepath = self.batch_root / row["filepath"]
-
-            if not filepath.exists():
-                self.db.set_media_status(row["media_id"], False,
-                                         "File not found on disk")
-                self.log(f"  NOT FOUND: {row['filename']}", "error")
-                continue
-
-            status, props = screen_file(filepath)
-
-            self.db.update_media_prescreener_props(
-                row["media_id"],
-                props["file_size_mb"],
-                props["pixel_width"],
-                props["pixel_height"],
-                props["format"],
-                props["capture_date"],
-                props["date_source"],
-                ", ".join(props.get("repair_issues", [])),
-            )
-            self.db.set_media_status(row["media_id"], status, props["qa_note"])
-
-            if not status:
-                reject_folder.mkdir(parents=True, exist_ok=True)
-                dest = reject_folder / row["filename"]
-                shutil.copy2(str(filepath), str(dest))
-                self.db.insert_reject(
-                    item_set_id=item_set_id,
-                    filename=row["filename"],
-                    filepath=row["filepath"],
-                    file_size_mb=props["file_size_mb"],
-                    pixel_width=props["pixel_width"],
-                    pixel_height=props["pixel_height"],
-                    format_note=props["format"],
-                    capture_date=props["capture_date"],
-                    date_source=props["date_source"],
-                    qa_note=props["qa_note"],
-                )
-                self._reject_rows.append({
-                    "filename":     row["filename"],
-                    "filepath":     row["filepath"],
-                    "file_size_mb": props["file_size_mb"],
-                    "pixel_width":  props["pixel_width"],
-                    "pixel_height": props["pixel_height"],
-                    "format":       props["format"],
-                    "capture_date": props["capture_date"],
-                    "date_source":  props["date_source"],
-                    "status":       False,
-                    "qa_note":      props["qa_note"],
-                })
-                self.log(
-                    f"  REJECTED {row['filename']}: {props['qa_note']}",
-                    "warning",
-                )
-            else:
-                self.log(f"  OK: {row['filename']}", "info")
-
-        self.db.recalculate_folder_status(item_set_id)
-
-    def write_rejects_csv(self):
-        """Write Rejects/rejects.csv and update rejected_count on the batch."""
-        self.db.set_rejected_count(len(self._reject_rows))
-        if not self._reject_rows:
-            return
-        out = self.rejects_root / "rejects.csv"
-        with open(out, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=_REJECTS_FIELDS)
-            writer.writeheader()
-            writer.writerows(self._reject_rows)
 
 
 # ---------------------------------------------------------------------------

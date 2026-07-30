@@ -9,7 +9,7 @@ machinery to drop the stale DB row.
 import shutil
 from typing import List
 
-from ..repair_media import parse_repair_issues, _append_rejects_csv
+from ..repair_media import parse_repair_issues, _append_repair_reject_csv
 
 
 class RejectService:
@@ -78,9 +78,9 @@ class RejectService:
                 dig.log(f"Cannot move {row['filename']}: {exc}", "error")
                 continue
 
-            _append_rejects_csv(
+            _append_repair_reject_csv(
                 dig.catalog_path, filepath,
-                [row.get("format_note") or ""], "Rejected",
+                [row.get("format") or ""], "Rejected",
             )
 
             rejected += 1
