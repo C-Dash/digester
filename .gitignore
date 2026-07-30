@@ -19,10 +19,11 @@ build/
 # PyInstaller output
 *.exe
 
-# Test batch data (large, local only)
+# Test batch data (large, local only) — any number of leading X's, since
+# these are commonly renamed to XCDB*/XXCDB*/XXXCDB*/... to temporarily
+# "hide" a working copy from the scanner without moving it out of the repo.
 CDB*/
-XCDB*/
-XXXCDB*/
+X*CDB*/
 X/
 
 # Archives
