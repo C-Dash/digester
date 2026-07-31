@@ -12,9 +12,11 @@ from .scanning import ScanService
 from .assignment import AssignmentService
 from .repair import RepairService
 from .reject import RejectService
+from .rotate import RotateService
 from .export import CatalogExportService
 
 __all__ = [
     "ValidationService", "ScreeningService", "ScanService",
-    "AssignmentService", "RepairService", "RejectService", "CatalogExportService",
+    "AssignmentService", "RepairService", "RejectService", "RotateService",
+    "CatalogExportService",
 ]

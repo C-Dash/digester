@@ -171,11 +171,32 @@ ______________________________
 
 ## Phase 2
 
-* Add menu items Media > Rotate CW and Media Rotate CCW.  These will be associated with new functionality in repair_media.py that will modify the exif orientation tag to achieve a 90 degree clockwise or counter-clockwise rotation. This does not apply to pdf format images or any media files that have a value of Reject in repair_issues.  
+**Media > Rotate CW/CCW — DONE.** Implemented in `repair_media.py` (`rotate_file()`, plus the `_ORIENTATION_ROTATE_CW`/`_CCW` composition tables — empirically derived and round-trip verified against Pillow's own `ImageOps.exif_transpose()`, not hand-worked-out), `services/rotate.py` (`RotateService`), `digester.py` delegates, and `gui/main_window.py` (two new Media-menu actions, live enable/disable driven by the current pane selection). Two real bugs were caught and fixed while implementing this:
+- `_get_exif_orientation()`'s ExifTool lookup only checked the `"EXIF:Orientation"` key; ExifTool only group-prefixes a tag when it needs to disambiguate from another group in that file, so it was silently always returning `None` for files without a collision. Now checks both `"EXIF:Orientation"` and the bare `"Orientation"` key.
+- The "carry EXIF forward on PIL re-write" general practice below can't use `exif=` for TIFF output — passing a TIFF-sourced `getexif()`/`tag_v2` back through `exif=` corrupts the written file (reproduced against Pillow 12.2). TIFF saves instead get a small allowlist of purely descriptive IFD0 tags (`_SAFE_TIFF_METADATA_TAGS`: ImageDescription/Make/Model/Software/DateTime/Artist/Copyright) via `tiffinfo=`, excluding structural/raster tags that only make sense for the original file's exact byte layout. JPEG saves use `exif=` as originally planned.
 
-If an image has repair issues, these would be addressed along with the rotation. 
+* Add menu items Media > Rotate CW and Media Rotate CCW.  
 
-The rotation menu item is grayed out if there are no applicable media files selected in the thumbnail or metadata panes. 
+* These will be associated with new functionality in repair_media.py 
+
+* In the case of a jpeg image, modify the exif orientation tag to achieve a 90 degree clockwise or counter-clockwise rotation.
+
+* In the case of a TIF, rotate the pixels.  
+
+* If a TIF file has a native orientation tag or EXIF orientation tag, set this to the normal position. 
+
+* Rotation does not apply to pdf format images or any media files that have a value of Reject in repair_issues.  
+
+* If an image has repair issues, these would be addressed along with the rotation. 
+
+* The rotation menu item is grayed out if there are no applicable media files selected in the thumbnail or metadata panes. 
+
+* As a general practice regardless of whether rotation has been applied, any re-writes that happen with PIL should carry over EXIF data if it exists.  
+
+* as usual, thumbnails should be regenerated after any rotation or repair. 
+
+________________________________
+
 
 
 * Have the scanner look at all files in the media folder, not just ones that are admissable. FIles that are not admissable can be rendered as thumbnails, but with a not ready status and a repair issue would consist of "Reject". 

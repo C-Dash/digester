@@ -86,6 +86,9 @@ class _Worker(QThread):
                 self.digester.repair_media_files(self.kwargs["media_ids"])
             elif op == "reject_media":
                 self.digester.reject_media_files(self.kwargs["media_ids"])
+            elif op == "rotate_media":
+                self.digester.rotate_media_files(
+                    self.kwargs["media_ids"], self.kwargs["direction"])
             elif op == "purge_caches":
                 self.digester.purge_caches()
         except Exception as exc:
@@ -243,6 +246,13 @@ class MainWindow(QMainWindow):
         self.thumbnail_pane.selection_changed.connect(
             self.media_table.highlight_media_ids
         )
+        # Rotate CW/CCW are grayed out unless the current selection contains
+        # at least one rotatable file. highlight_media_ids() (above) doesn't
+        # re-emit selection_changed, so exactly one of these two fires per
+        # genuine user selection change — both must be connected to catch
+        # either source.
+        self.media_table.selection_changed.connect(self._sync_rotate_enabled)
+        self.thumbnail_pane.selection_changed.connect(self._sync_rotate_enabled)
         self.folder_pane.folder_selected.connect(self._on_folder_selected)
 
     def _build_menus(self):
@@ -298,6 +308,18 @@ class MainWindow(QMainWindow):
         self._act_reject.triggered.connect(self._reject_selected_media)
         self._act_reject.setEnabled(False)
         media_menu.addAction(self._act_reject)
+
+        self._act_rotate_cw = QAction("Rotate CW", self)
+        self._act_rotate_cw.triggered.connect(
+            lambda: self._rotate_selected_media("cw"))
+        self._act_rotate_cw.setEnabled(False)
+        media_menu.addAction(self._act_rotate_cw)
+
+        self._act_rotate_ccw = QAction("Rotate CCW", self)
+        self._act_rotate_ccw.triggered.connect(
+            lambda: self._rotate_selected_media("ccw"))
+        self._act_rotate_ccw.setEnabled(False)
+        media_menu.addAction(self._act_rotate_ccw)
 
         # --- Digester ---
         digester_menu = mb.addMenu("Digester")
@@ -369,6 +391,7 @@ class MainWindow(QMainWindow):
                     self._act_assign, self._act_repair, self._act_reject):
             act.setEnabled(True)
         self._sync_csv_enabled()   # CSV stays dim until the batch is ready
+        self._sync_rotate_enabled([])   # no selection yet on a fresh load
 
     @Slot()
     def _initialize_batch(self):
@@ -553,6 +576,33 @@ class MainWindow(QMainWindow):
         self._run("reject_media", on_finish=self._reload_after_folder_scan,
                   media_ids=rejectable_ids)
 
+    def _rotate_selected_media(self, direction: str):
+        if not self.digester or not self.digester.is_open:
+            return
+
+        media_ids = self.media_table.selected_media_ids()
+        if not media_ids:
+            return   # menu action is disabled in this case; defensive no-op
+
+        rotatable_ids = self.digester.rotatable_media_ids(media_ids)
+        skipped = len(media_ids) - len(rotatable_ids)
+
+        if not rotatable_ids:
+            return   # same — shouldn't be reachable while the action is enabled
+
+        self.console.append_message(
+            f"Rotating {len(rotatable_ids)} selected media file(s) "
+            f"({direction})...",
+            "info",
+        )
+        if skipped:
+            self.console.append_message(
+                f"Skipping {skipped} selected file(s) not eligible for rotation.",
+                "info",
+            )
+        self._run("rotate_media", on_finish=self._reload_after_folder_scan,
+                  media_ids=rotatable_ids, direction=direction)
+
     # --------------------------------------------------------------- helpers
 
     def _reload_folders(self):
@@ -574,6 +624,10 @@ class MainWindow(QMainWindow):
         # Assign Metadata runs synchronously (no worker → no _set_busy), so
         # re-derive the CSV action here in case batch ready changed.
         self._sync_csv_enabled()
+        # load_media() clears the table's selection without emitting
+        # selection_changed (suppressed during the reset), so Rotate's
+        # enabled state needs an explicit re-derive here too.
+        self._sync_rotate_enabled([])
 
     def _set_busy(self, busy: bool):
         """Enable/disable all DB-touching UI while a worker runs.
@@ -590,18 +644,32 @@ class MainWindow(QMainWindow):
                     self._act_val_folder, self._act_assign, self._act_repair,
                     self._act_reject):
             act.setEnabled(not busy)
-        # CSV is special: disabled while busy, and otherwise only enabled when
-        # the batch ready status is True (not blanket-enabled with the rest).
+        # CSV and Rotate are special: disabled while busy, and otherwise only
+        # re-enabled based on their own condition (batch ready / selection
+        # content) rather than blanket-enabled with the rest.
         if busy:
             self._act_csv.setEnabled(False)
+            self._act_rotate_cw.setEnabled(False)
+            self._act_rotate_ccw.setEnabled(False)
         else:
             self._sync_csv_enabled()
+            self._sync_rotate_enabled(self.media_table.selected_media_ids())
 
     def _sync_csv_enabled(self):
         """Enable 'Produce CSV Files' only when the batch ready status is True."""
         batch = (self.digester.get_batch()
                  if self.digester and self.digester.is_open else None)
         self._act_csv.setEnabled(bool(batch and batch["ready"]))
+
+    def _sync_rotate_enabled(self, media_ids: List[int]):
+        """Enable Rotate CW/CCW only when the selection has at least one
+        rotatable file (JPEG/TIFF, not flagged Reject)."""
+        rotatable = bool(
+            self.digester and self.digester.is_open
+            and media_ids and self.digester.rotatable_media_ids(media_ids)
+        )
+        self._act_rotate_cw.setEnabled(rotatable)
+        self._act_rotate_ccw.setEnabled(rotatable)
 
     def _run(self, operation: str, on_finish=None, **kwargs):
         """Dispatch a digester operation to a background thread.

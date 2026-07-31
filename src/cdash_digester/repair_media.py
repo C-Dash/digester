@@ -6,6 +6,8 @@ CDASH Repair Media Module
   saved back over the original filepath (overwriting it). If the repair is
   refused or reverted, the original file is left completely untouched —
   nothing is backed up or deleted.
+- Any PIL re-save carries the source image's EXIF forward (general practice,
+  not rotation-specific) so metadata isn't silently dropped by a repair.
 
 Issues and Remedies
 - flatten      -> drop the alpha/16-bit channel (RGBA/LA/I;16) to a clean mode
@@ -17,10 +19,19 @@ Issues and Remedies
                   separate Reject action (services/reject.py), which is the
                   only thing that moves/removes the file
 
-The EXIF-orientation rotation helpers below (_ORIENTATION_ROTATION,
-_DEFAULT_VERT_ROTATION, _get_exif_orientation) are not currently wired to any
-repair_issues code — iphone_vert was retired from the prescreener — but are
-kept for the planned Media > Rotate CW / Rotate CCW menu actions.
+Rotation (Media > Rotate CW / Rotate CCW, see rotate_file()) is a separate,
+user-initiated action, not driven by repair_issues:
+- JPEG: metadata-only — rewrite the EXIF Orientation tag via ExifTool, no
+  pixel re-encode. JPEG orientation is broadly honored downstream (and this
+  app's own thumbnail pane already reads it via ImageOps.exif_transpose()),
+  and JPEGs never carry repairable repair_issues in this codebase, so there's
+  never anything to combine with.
+- TIFF: physically bake the rotation into pixels — TIFF orientation-tag
+  support is too inconsistent downstream to rely on. Any pending pixel-level
+  repair_issues (Flatten/Compress LZW/Check MBs) are folded into the same
+  pass. Any existing orientation tag (native TIFF tag 274 or EXIF) is reset
+  to 1 (Normal) afterward — TIFF orientation tags are never trusted, read or
+  written, for anything other than clearing them.
 """
 
 import argparse
@@ -29,12 +40,12 @@ import io
 import shutil
 import sys
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from PIL import Image
 
 from . import prescreener
-from .exiftool_util import read_tags
+from .exiftool_util import read_tags, write_orientation
 
 # EXIF Orientation (numeric) → Pillow rotation angle in degrees CCW with expand=True
 # Pillow positive angles are CCW; expand=True resizes canvas to fit rotated content.
@@ -44,6 +55,30 @@ _ORIENTATION_ROTATION = {
     8: 270,    # phone rotated 90° CCW → correct by rotating pixels 90° CCW
 }
 _DEFAULT_VERT_ROTATION = 90   # orientation=1 with portrait pixels: assume 90° CW fix
+
+# JPEG rotation: composition tables for "current EXIF Orientation value, plus
+# one more 90° turn -> new Orientation value". Empirically derived and
+# round-trip verified against Pillow's own ImageOps.exif_transpose() table
+# (see tests/test_repair_media.py) rather than worked out by hand — this
+# composition is exactly the kind of thing that's easy to get subtly wrong,
+# especially for the four mirrored states (2/4/5/7).
+_ORIENTATION_ROTATE_CW  = {1: 6, 2: 7, 3: 8, 4: 5, 5: 2, 6: 3, 7: 4, 8: 1}
+_ORIENTATION_ROTATE_CCW = {1: 8, 2: 5, 3: 6, 4: 7, 5: 4, 6: 1, 7: 2, 8: 3}
+
+# TIFF EXIF carryover: purely descriptive IFD0 tags only, verified safe to
+# copy into a freshly-written TIFF via tiffinfo=. Deliberately excludes
+# structural/raster tags (StripOffsets, Compression, BitsPerSample, ...)
+# that describe the *original* file's exact byte layout and would corrupt a
+# newly-encoded file if copied over verbatim.
+_SAFE_TIFF_METADATA_TAGS = {
+    270,    # ImageDescription
+    271,    # Make
+    272,    # Model
+    305,    # Software
+    306,    # DateTime
+    315,    # Artist
+    33432,  # Copyright
+}
 
 
 def _normalize_issue(issue: str) -> str:
@@ -94,8 +129,15 @@ def _append_repair_reject_csv(
 
 
 def _get_exif_orientation(filepath: Path):
-    """Return numeric EXIF Orientation via ExifTool, or None on failure."""
-    return read_tags(filepath).get("EXIF:Orientation")
+    """Return numeric EXIF Orientation via ExifTool, or None on failure.
+
+    ExifTool's flat -json output only group-prefixes a tag (e.g.
+    "EXIF:Orientation") when it needs to disambiguate a same-named tag from
+    another group (e.g. XMP) in that particular file — otherwise it reports
+    the bare tag name. Both forms have to be checked.
+    """
+    tags = read_tags(filepath)
+    return tags.get("EXIF:Orientation", tags.get("Orientation"))
 
 
 def repair_file(
@@ -121,10 +163,37 @@ def repair_file(
                "action to move it out of the batch.")
         return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
 
+    return _apply_pixel_repairs_and_commit(filepath, issues, catalog_path)
+
+
+def _apply_pixel_repairs_and_commit(
+    filepath: Path,
+    issues: List[str],
+    catalog_path: Path,
+    rotate_degrees: Optional[int] = None,
+) -> Tuple[bool, str]:
+    """Shared pixel pipeline for repair_file() and rotate_file()'s TIFF path:
+    open, apply flatten/compress_lzw/check_mbs for whatever issues are
+    present, optionally rotate, then commit (backup + save) — or, for a
+    Check MBs repair that's still oversized, leave the file untouched.
+    ``issues`` is assumed already parsed/normalized and Reject-free.
+    """
     try:
         raw_img = Image.open(filepath)
         raw_img.load()
         img = raw_img.copy()
+        # JPEG carries EXIF forward via exif=; TIFF must NOT use exif= on
+        # save — passing a TIFF-sourced getexif()/tag_v2 back in via exif=
+        # corrupts the written file (reproduced against Pillow 12.2). TIFF
+        # instead gets a small allowlist of purely descriptive IFD0 tags
+        # (Make/Model/DateTime/etc.) via tiffinfo=, deliberately excluding
+        # structural/raster tags (StripOffsets, Compression, ...) that only
+        # make sense for the exact byte layout of the original file.
+        source_exif = raw_img.getexif()
+        source_tiffinfo = {
+            tag: value for tag, value in getattr(raw_img, "tag_v2", {}).items()
+            if tag in _SAFE_TIFF_METADATA_TAGS
+        }
         raw_img.close()
     except Exception as exc:
         msg = f"Cannot open image: {exc}"
@@ -154,16 +223,23 @@ def repair_file(
     if "compress_lzw" in issues:
         applied.append("lzw compression applied")
 
-    suffix = filepath.suffix.lower()
+    # 3. Rotation (TIFF only, requested by rotate_file() — not repair_file())
+    if rotate_degrees is not None:
+        img = img.rotate(rotate_degrees, expand=True)
+        applied.append(f"rotated {rotate_degrees} degrees")
 
-    # 3. check_mbs -> render to a buffer first and re-check size before
+    suffix = filepath.suffix.lower()
+    tiff_save_kwargs = {"tiffinfo": source_tiffinfo} if source_tiffinfo else {}
+    other_save_kwargs = {"exif": source_exif}
+
+    # 4. check_mbs -> render to a buffer first and re-check size before
     # committing anything. Check MBs is TIFF-only by construction (it's only
     # ever paired with Compress LZW for an uncompressed oversized TIFF).
     buf = None
     if "check_mbs" in issues:
         buf = io.BytesIO()
         try:
-            img.save(buf, format="TIFF", compression="tiff_lzw")
+            img.save(buf, format="TIFF", compression="tiff_lzw", **tiff_save_kwargs)
         except Exception as exc:
             msg = f"Cannot save repaired image: {exc}"
             return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
@@ -192,15 +268,68 @@ def repair_file(
             with open(filepath, "wb") as f:
                 f.write(buf.getvalue())
         elif suffix in (".tif", ".tiff"):
-            img.save(str(filepath), compression="tiff_lzw")
+            img.save(str(filepath), compression="tiff_lzw", **tiff_save_kwargs)
         else:
-            img.save(str(filepath))
+            img.save(str(filepath), **other_save_kwargs)
     except Exception as exc:
         msg = f"Cannot save repaired image: {exc}"
         return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
 
+    if rotate_degrees is not None:
+        # TIFF orientation tags are never trusted — always reset to Normal
+        # after baking a rotation into pixels, regardless of what the source
+        # had (including whatever the exif= carryover above preserved).
+        write_orientation(filepath, 1)
+
     msg = "Repaired: " + "|".join(applied)
     return True, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+
+
+def rotate_file(
+    filepath: Path,
+    direction: str,
+    issues: str | Iterable[str] | None = None,
+    catalog_path: Path = None,
+) -> Tuple[bool, str]:
+    """Rotate filepath 90 degrees. direction is "cw" or "ccw".
+
+    JPEG: metadata-only EXIF Orientation rewrite, no pixel re-encode.
+    TIFF: pixels physically rotated (any pending flatten/compress_lzw/
+    check_mbs issues are folded into the same pass), orientation tag reset
+    to 1 (Normal) afterward.
+    Reject-flagged files and PDFs are refused, left completely untouched.
+    Returns (success, message).
+    """
+    issues = parse_repair_issues(issues)
+    suffix = filepath.suffix.lower()
+
+    if "reject" in issues or "multiframe_tiff" in issues:
+        msg = ("Cannot rotate — file is flagged Reject. Use the Reject "
+               "action to move it out of the batch.")
+        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+
+    if suffix == ".pdf":
+        msg = "Rotation does not apply to PDF files"
+        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+
+    if suffix in (".jpg", ".jpeg"):
+        table = _ORIENTATION_ROTATE_CW if direction == "cw" else _ORIENTATION_ROTATE_CCW
+        current = _get_exif_orientation(filepath) or 1
+        new_value = table.get(current, table[1])
+        if not write_orientation(filepath, new_value):
+            msg = "Cannot write EXIF Orientation tag (is ExifTool on PATH?)"
+            return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+        msg = f"Rotated: orientation {current} -> {new_value}"
+        return True, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+
+    if suffix in (".tif", ".tiff"):
+        degrees = -90 if direction == "cw" else 90
+        return _apply_pixel_repairs_and_commit(
+            filepath, issues, catalog_path, rotate_degrees=degrees
+        )
+
+    msg = "Rotation only applies to JPEG and TIFF files"
+    return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
 
 
 def main():

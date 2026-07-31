@@ -44,3 +44,29 @@ def read_tags(filepath: Path, numeric: bool = True, timeout: int = 30) -> dict:
         return data[0] if data else {}
     except Exception:
         return {}
+
+
+def write_orientation(filepath: Path, value: int, timeout: int = 30) -> bool:
+    """Write the Orientation tag (EXIF for JPEG, native tag 274 for TIFF) to
+    ``value``. Returns True on success, False on any failure (missing
+    ExifTool, bad file, etc.) — callers should treat failure as non-fatal.
+
+    -overwrite_original skips ExifTool's own "_original" backup copy; this
+    codebase manages its own backups via the repaired/ subfolder.
+    """
+    args = [
+        "exiftool", "-overwrite_original", "-n",
+        f"-Orientation={value}", str(filepath),
+    ]
+    try:
+        proc = subprocess.run(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=_CREATE_NO_WINDOW,
+            timeout=timeout,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False

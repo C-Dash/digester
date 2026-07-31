@@ -35,7 +35,8 @@ from .cdash_objects import BatchDB, parse_batch_name
 from .validator import CDASHValidator
 from .services import (
     ScanService, ValidationService, ScreeningService,
-    AssignmentService, RepairService, RejectService, CatalogExportService,
+    AssignmentService, RepairService, RejectService, RotateService,
+    CatalogExportService,
 )
 
 
@@ -56,6 +57,7 @@ class Digester:
         self._assignment = AssignmentService(self)
         self._repair = RepairService(self)
         self._reject = RejectService(self)
+        self._rotate = RotateService(self)
         self._export = CatalogExportService(self)
 
     # ------------------------------------------------------------------ paths
@@ -176,6 +178,14 @@ class Digester:
     def rejectable_media_ids(self, media_ids: List[int]) -> List[int]:
         """Subset of media_ids flagged Reject."""
         return self._reject.rejectable_media_ids(media_ids)
+
+    def rotate_media_files(self, media_ids: List[int], direction: str):
+        """Rotate selected media files 90 degrees ("cw" or "ccw")."""
+        self._rotate.rotate_media_files(media_ids, direction)
+
+    def rotatable_media_ids(self, media_ids: List[int]) -> List[int]:
+        """Subset of media_ids eligible for rotation (JPEG/TIFF, not Reject)."""
+        return self._rotate.rotatable_media_ids(media_ids)
 
     def export_csv(self):
         """Export batch.csv, folder.csv, place.csv, document.csv, media.csv."""
