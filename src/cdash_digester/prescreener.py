@@ -46,6 +46,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Tuple
 
+import filetype
 from PIL import Image, UnidentifiedImageError
 from PIL.ExifTags import TAGS
 import fitz  # pymupdf
@@ -74,18 +75,18 @@ _CLEAN_MODES = {
 
 
 _MODE_DESCRIPTIONS = {
-    "1": "1-bit black and white",
-    "L": "8-bit grayscale",
-    "P": "8-bit pixels, color palette",
-    "RGB": "RGB 3x8-bit, true color",
-    "RGBA": "RGBA 4x8-bit, true color with transparency",
-    "LA": "LA 2x8-bit, grayscale with transparency",
-    "CMYK": "CMYK 4x8-bit, color separation",
-    "YCbCr": "YCbCr 3x8-bit pixels, color video",
-    "LAB": "LAB 3x8-bit, L*a*b color space",
-    "HSV": "HSV 3x8-bit pixels",
+    "1": "b&w 1-bit",
+    "L": "grayscale 8-bit",
+    "LA": "grayscale 8-bit + alpha",
+    "P": "color-map 8-bit ",
+    "RGB": "RGB 24-bit",
+    "RGBA": "RGBA 24-bit + alpha",
+    "CMYK": "CMYK 36-bit ink",
+    "YCbCr": "color video 24-bit",
+    "LAB": "LAB 24-bit",
+    "HSV": "HSV 24-bit",
     "I": "32-bit signed integer",
-    "I;16": "16-bit unsigned integer, grayscale",
+    "I;16": "16-bit integer",
     "F": "32-bit floating point",
 }
 
@@ -170,10 +171,18 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         try:
             img = Image.open(filepath)
             img.load()
-            props["format"] = img.mode
+            props["format"] = _MODE_DESCRIPTIONS.get(img.mode, img.mode)
             props["pixel_width"], props["pixel_height"] = img.size
         except Exception:
-            pass
+            # Not an image PIL understands — fall back to a lightweight
+            # magic-byte sniff so format still gets a short description
+            # (e.g. "ZIP", "MP4") instead of staying blank.
+            try:
+                kind = filetype.guess(str(filepath))
+                if kind is not None:
+                    props["format"] = kind.extension.upper()
+            except Exception:
+                pass
         props["format_issues"].append("Format not supported")
         props["repair_issues"] = ["Reject"]
         return False, props
@@ -220,9 +229,9 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     # PDF path
     if suffix == ".pdf":
         ok, msg, flavor = _check_pdf_a1b(filepath)
-        props["format_issues"].append(msg)
         props["format"]  = flavor
         if not ok:
+            props["format_issues"].append(msg)
             props["repair_issues"].append("Reject")
             ok = False
         # Extract creation date and page count from PDF metadata.
@@ -259,8 +268,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         props["repair_issues"] = ["Reject"]
         return False, props
 
-    props["format"] = img.mode
-    props["format_issues"].append(_MODE_DESCRIPTIONS.get(img.mode, img.mode))
+    props["format"] = _MODE_DESCRIPTIONS.get(img.mode, img.mode)
     if img.mode not in _CLEAN_MODES.get(suffix, set()):
         if suffix in (".tif", ".tiff") and img.mode in ("RGBA", "LA", "I;16"):
             props["repair_issues"].append("Flatten")

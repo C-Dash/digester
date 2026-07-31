@@ -93,6 +93,7 @@ Issue codes are normalized: lowercase, hyphens → underscores (so `Reject` is m
 - `PySide6` — GUI framework
 - `Pillow` — image reading, mode checks, frame counting, repair transforms
 - `PyMuPDF (fitz)` — PDF metadata and XMP parsing
+- `filetype` — pure-Python, no binary deps; magic-byte fallback in `prescreener.py` to identify a short format description (e.g. "ZIP", "MP4") for files PIL can't open
 - `exiftool` (external executable, called via one-shot subprocess in `exiftool_util.read_tags`) — EXIF Orientation, HostComputer, DateTimeOriginal
 
 ## Development Notes
@@ -170,6 +171,11 @@ ______________________________
 
 ## Phase 2
 
-* Add menu items Media > Rotate CW and Media Rotate CCW.  These will be associated with new functionality in repair_media.py that will modify the exif orientation tag to achieve a 90 degree clockwise or counterclockwie rottion.rotation
+* Add menu items Media > Rotate CW and Media Rotate CCW.  These will be associated with new functionality in repair_media.py that will modify the exif orientation tag to achieve a 90 degree clockwise or counter-clockwise rotation. This does not apply to pdf format images or any media files that have a value of Reject in repair_issues.  
+
+If an image has repair issues, these would be addressed along with the rotation. 
+
+The rotation menu item is grayed out if there are no applicable media files selected in the thumbnail or metadata panes. 
+
 
 * Have the scanner look at all files in the media folder, not just ones that are admissable. FIles that are not admissable can be rendered as thumbnails, but with a not ready status and a repair issue would consist of "Reject". 

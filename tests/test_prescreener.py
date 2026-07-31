@@ -13,7 +13,7 @@ def test_jpeg_rgb_accepted(tmp_path):
     p = make_image(tmp_path / "a.jpg", "RGB")
     accepted, props = screen_file(p)
     assert accepted is True
-    assert props["format"] == "RGB"
+    assert props["format"] == "RGB 24-bit"
     assert props["repair_issues"] == []
 
 
@@ -115,7 +115,7 @@ def test_unsupported_suffix_but_pil_readable_still_flags_not_supported(tmp_path)
     make_image(p, "RGB", fmt="PNG")
     accepted, props = screen_file(p)
     assert accepted is False
-    assert props["format"] == "RGB"
+    assert props["format"] == "RGB 24-bit"
     assert props["format_issues"] == ["Format not supported"]
     assert props["repair_issues"] == ["Reject"]
 
@@ -126,6 +126,18 @@ def test_unsupported_suffix_and_pil_unreadable_flags_not_supported(tmp_path):
     accepted, props = screen_file(p)
     assert accepted is False
     assert props["format"] is None
+    assert props["format_issues"] == ["Format not supported"]
+    assert props["repair_issues"] == ["Reject"]
+
+
+def test_unsupported_suffix_falls_back_to_filetype_sniff(tmp_path):
+    # PIL can't open a zip, but the lightweight filetype sniff can identify
+    # it from its magic bytes and give format a short description.
+    p = tmp_path / "a.docx"
+    p.write_bytes(b"PK\x03\x04" + b"0" * 40)
+    accepted, props = screen_file(p)
+    assert accepted is False
+    assert props["format"] == "ZIP"
     assert props["format_issues"] == ["Format not supported"]
     assert props["repair_issues"] == ["Reject"]
 
