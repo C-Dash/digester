@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..cdash_objects import (
-    DOC_TYPES, ACCEPTED_SUFFIXES,
+    DOC_TYPES,
     parse_batch_name, parse_folder_name, parse_media_name, slugify,
 )
 from .validation import PLACE_FOLDER_MISMATCH_NOTE
@@ -174,9 +174,13 @@ class FolderScanner:
     Holds the per-folder scan state (document tracker, slug→place map, document
     sequence counter) that was previously local to _scan_media_in_folder.
 
-    Format-rejected files stay in place; their issues are recorded in
-    cdash_media.notes and they continue through name parsing and place
-    validation so all problems are captured in a single scan.
+    Every file in the folder is registered, regardless of suffix — a file
+    outside the accepted formats still gets a row (format identified via PIL
+    when possible, Reject-flagged always) so it shows up with a thumbnail
+    attempt and can be moved out via the Reject action. Format-rejected files
+    stay in place; their issues are recorded in cdash_media.format_issues and
+    they continue through name parsing and place validation so all problems
+    are captured in a single scan.
     """
 
     def __init__(self, dig, folder_dir: Path, item_set_id: int,
@@ -192,9 +196,10 @@ class FolderScanner:
 
     def run(self):
         dig = self._dig
+        # Every file is scanned, regardless of suffix — f.is_file() alone
+        # already excludes subdirectories like the repaired/ backup folder.
         media_files = sorted(
-            f for f in self.folder_dir.iterdir()
-            if f.is_file() and f.suffix.lower() in ACCEPTED_SUFFIXES
+            f for f in self.folder_dir.iterdir() if f.is_file()
         )
         for filepath in media_files:
             self._process_file(filepath)

@@ -20,6 +20,11 @@ Rejection criteria
 - Unreadable / corrupt file
 - Multi-frame TIFF
 - PDF without PDF/A-1b XMP marker
+- Any other file type found in a media folder (the scanner registers every
+  file, not just the three accepted suffixes) — always
+  format_issues = "Format not supported", even if PIL can open it (e.g. a
+  PNG); PIL is still given a chance to identify format = the PIL mode for
+  display purposes
 
 Repairable issues (see repair_media.py)
 ----------------------------------------
@@ -66,6 +71,24 @@ _CLEAN_MODES = {
     ".tif":  {"RGB", "L", "1"},
     ".tiff": {"RGB", "L", "1"},
 }
+
+
+_MODE_DESCRIPTIONS = {
+    "1": "1-bit black and white",
+    "L": "8-bit grayscale",
+    "P": "8-bit pixels, color palette",
+    "RGB": "RGB 3x8-bit, true color",
+    "RGBA": "RGBA 4x8-bit, true color with transparency",
+    "LA": "LA 2x8-bit, grayscale with transparency",
+    "CMYK": "CMYK 4x8-bit, color separation",
+    "YCbCr": "YCbCr 3x8-bit pixels, color video",
+    "LAB": "LAB 3x8-bit, L*a*b color space",
+    "HSV": "HSV 3x8-bit pixels",
+    "I": "32-bit signed integer",
+    "I;16": "16-bit unsigned integer, grayscale",
+    "F": "32-bit floating point",
+}
+
 
 # ---------------------------------------------------------------------------
 # Low-level file screening
@@ -131,7 +154,27 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     suffix = filepath.suffix.lower()
 
     if suffix not in _ACCEPTED_SUFFIXES:
-        props["format_issues"].append(f"Unsupported file type: {suffix}")
+        # Not one of the three accepted formats — always Reject, and always
+        # "Format not supported" regardless of whether PIL can open it (a
+        # PNG is readable but still not a supported format). PIL is still
+        # given a chance to identify the mode for display purposes.
+        try:
+            st = filepath.stat()
+            props["file_size_mb"] = st.st_size / (1024 * 1024)
+            props["capture_date"] = datetime.fromtimestamp(
+                st.st_ctime
+            ).strftime("%Y-%m-%d")
+            props["date_source"] = "filesystem"
+        except OSError:
+            pass
+        try:
+            img = Image.open(filepath)
+            img.load()
+            props["format"] = img.mode
+            props["pixel_width"], props["pixel_height"] = img.size
+        except Exception:
+            pass
+        props["format_issues"].append("Format not supported")
         props["repair_issues"] = ["Reject"]
         return False, props
 
@@ -217,6 +260,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         return False, props
 
     props["format"] = img.mode
+    props["format_issues"].append(_MODE_DESCRIPTIONS.get(img.mode, img.mode))
     if img.mode not in _CLEAN_MODES.get(suffix, set()):
         if suffix in (".tif", ".tiff") and img.mode in ("RGBA", "LA", "I;16"):
             props["repair_issues"].append("Flatten")
@@ -249,7 +293,6 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     # Format-specific checks
     if suffix in (".jpg", ".jpeg"):
         if img.mode != "RGB":
-            props["format_issues"].append(f"JPEG must be 24-bit RGB; got {img.mode}")
             props["repair_issues"] = ["Reject"]
             return False, props
 
@@ -275,10 +318,6 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
                 f"TIFF must use LZW compression (code {compression} found)"
             )
 
-        if img.mode not in ("RGB", "L", "1"):
-            props["format_issues"].append(
-                f"TIFF must be 24-bit RGB, 8-bit grayscale, or 1-bit bilevel; got {img.mode}"
-            )
 
         if props["repair_issues"]:
             return False, props

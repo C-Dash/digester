@@ -108,12 +108,25 @@ def test_plain_pdf_flags_reject(tmp_path):
 
 # --------------------------------------------------------------- unsupported
 
-def test_unsupported_suffix_rejected(tmp_path):
+def test_unsupported_suffix_but_pil_readable_still_flags_not_supported(tmp_path):
+    # Foreign suffix — even though PIL can open it (e.g. a PNG), format is
+    # still the PIL mode but format_issues always says "Format not supported".
     p = tmp_path / "a.png"
     make_image(p, "RGB", fmt="PNG")
     accepted, props = screen_file(p)
     assert accepted is False
-    assert any("Unsupported file type" in msg for msg in props["format_issues"])
+    assert props["format"] == "RGB"
+    assert props["format_issues"] == ["Format not supported"]
+    assert props["repair_issues"] == ["Reject"]
+
+
+def test_unsupported_suffix_and_pil_unreadable_flags_not_supported(tmp_path):
+    p = tmp_path / "a.docx"
+    p.write_bytes(b"not an image at all, just some bytes")
+    accepted, props = screen_file(p)
+    assert accepted is False
+    assert props["format"] is None
+    assert props["format_issues"] == ["Format not supported"]
     assert props["repair_issues"] == ["Reject"]
 
 

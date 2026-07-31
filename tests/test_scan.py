@@ -41,6 +41,32 @@ def scanned(make_batch):
     d.close()
 
 
+def test_scan_registers_non_accepted_suffix_file_as_reject(make_batch):
+    """A file outside the accepted suffixes used to be silently skipped by
+    the scanner; it must now get its own row, Reject-flagged, alongside a
+    normal accepted file in the same folder."""
+    root = make_batch("CDB260430-Test_batch")
+    folder = root / "media" / "F1-Main-OF101"
+    folder.mkdir(parents=True)
+    _media(folder, "Main", 1, 1, "VE", 55)
+    (folder / "notes.docx").write_bytes(b"not an image at all, just bytes")
+
+    validator = FakeValidator(folders={101: "Main St Folder"},
+                              places={55: place_props("Main Place")})
+    d = Digester(root, log=lambda *a, **k: None)
+    d.load_or_initialize()
+    d._validator = validator
+    d.scan_batch()
+
+    rows = d.db.get_media_for_folder(101)
+    assert len(rows) == 2
+    bad_row = next(r for r in rows if r["filename"] == "notes.docx")
+    assert bad_row["ready"] is False
+    assert bad_row["repair_issues"] == "Reject"
+    assert bad_row["format_issues"] == "Format not supported"
+    d.close()
+
+
 def test_scan_counts(scanned):
     d, _ = scanned
     stats = d.db.count_batch_stats()
