@@ -73,7 +73,7 @@ _FOLDER_RE = re.compile(
 # Ready media stem:
 #   <place_slug>_<doc_index>p<page_index>-<doc_type>[-OP<place_id>]
 _MEDIA_RE = re.compile(
-    r"^(?P<place_slug>.+)_(?P<doc_index>\d{4})p(?P<page_index>\d{4})"
+    r"^(?P<place_slug>.+)[-_](?P<doc_index>\d+)p(?P<page_index>\d+)"
     r"-(?P<doc_type>[A-Z]{2})(?:-OP(?P<place_id>\d+))?$",
     re.IGNORECASE,
 )
