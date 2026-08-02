@@ -210,7 +210,7 @@ class FolderScanner:
         item_set_id = self.item_set_id
         batch_folder_id = self.batch_folder_id
 
-        dig.log(f"  {filepath.name}", "info")
+        # dig.log(f"  {filepath.name}", "info")
         notes_parts: list = []
         repair_issues = ""
 

@@ -37,7 +37,7 @@ _DEBUG = False     # set True to re-enable thumbnail render diagnostics
 _THUMB = 200       # bounding box in px
 _BORDER = 3
 _SEL_BORDER = 6
-_LABEL_H = 32      # height reserved for filename text
+_LABEL_H = 48      # height reserved for filename text
 _COLS = 4          # thumbnails per row
 
 
@@ -136,7 +136,8 @@ class _Thumb(QFrame):
         if page_label:
             self._add_page_badge(page_label, scaled, badge_color)
 
-        self._name_label = QLabel(filename)
+        wrappable_name = filename.replace("_", "_​")
+        self._name_label = QLabel(wrappable_name)
         self._name_label.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         self._name_label.setFixedSize(_w, _LABEL_H)
         self._name_label.setWordWrap(True)

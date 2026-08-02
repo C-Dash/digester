@@ -33,11 +33,13 @@ Repairable issues (see repair_media.py)
 - "Check MBs" — oversized uncompressed TIFF, may fit once compressed
 
 Every rejection path sets repair_issues to the exclusive "Reject" code —
-including unreadable/corrupt files (format="Unreadable": unstat-able, won't
-open, won't decode) and not-admissible files with no repair path (unsupported
-suffix, multi-frame TIFF, oversized, over the megapixel limit, wrong JPEG
-mode, 32-bit float TIFF, non-PDF/A) — so nothing screened out is ever left
-without an actionable Reject flag.
+including unreadable/corrupt files (unstat-able, won't open, won't decode)
+and not-admissible files with no repair path (unsupported suffix,
+multi-frame TIFF, oversized, over the megapixel limit, wrong JPEG mode,
+32-bit float TIFF, non-PDF/A) — so nothing screened out is ever left
+without an actionable Reject flag. When PIL/fitz can't identify a file at
+all, format falls back to a filetype (magic-byte) guess (e.g. "ZIP", "MP4");
+format="Unreadable" only when that guess also fails.
 """
 
 import argparse
@@ -95,6 +97,19 @@ _MODE_DESCRIPTIONS = {
 # Low-level file screening
 # ---------------------------------------------------------------------------
 
+def _filetype_fallback(filepath: Path) -> str:
+    """Best-effort format guess via magic bytes when PIL/fitz can't identify
+    the file. Returns the short extension (e.g. "ZIP", "MP4") or
+    "Unreadable" if filetype can't identify it either."""
+    try:
+        kind = filetype.guess(str(filepath))
+        if kind is not None:
+            return kind.extension.upper()
+    except Exception:
+        pass
+    return "Unreadable"
+
+
 def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
     """Return (ok, message, flavor) for PDF/A conformance via XMP marker.
 
@@ -127,7 +142,7 @@ def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
             return True, "PDF/A conformance marker found", "PDF/A"
         return False, "Non-archival PDF", "PDF"
     except Exception as exc:
-        return False, f"PDF error: {exc}", "Unreadable"
+        return False, f"PDF error: {exc}", _filetype_fallback(filepath)
 
 
 def screen_file(filepath: Path) -> Tuple[bool, dict]:
@@ -177,12 +192,9 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             # Not an image PIL understands — fall back to a lightweight
             # magic-byte sniff so format still gets a short description
             # (e.g. "ZIP", "MP4") instead of staying blank.
-            try:
-                kind = filetype.guess(str(filepath))
-                if kind is not None:
-                    props["format"] = kind.extension.upper()
-            except Exception:
-                pass
+            fmt = _filetype_fallback(filepath)
+            if fmt != "Unreadable":
+                props["format"] = fmt
         props["format_issues"].append("Format not supported")
         props["repair_issues"] = ["Reject"]
         return False, props
@@ -222,7 +234,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
                 return False, props
     except OSError as exc:
         props["format_issues"].append(f"Cannot read file: {exc}")
-        props["format"] = "Unreadable"
+        props["format"] = _filetype_fallback(filepath)
         props["repair_issues"] = ["Reject"]
         return False, props
 
@@ -264,7 +276,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             img = Image.open(filepath)
     except (UnidentifiedImageError, Exception) as exc:
         props["format_issues"].append(f"Cannot open image: {exc}")
-        props["format"] = "Unreadable"
+        props["format"] = _filetype_fallback(filepath)
         props["repair_issues"] = ["Reject"]
         return False, props
 
@@ -335,7 +347,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         img.load()
     except Exception as exc:
         props["format_issues"].append(f"Cannot decode image: {exc}")
-        props["format"] = "Unreadable"
+        props["format"] = _filetype_fallback(filepath)
         props["repair_issues"] = ["Reject"]
         return False, props
 

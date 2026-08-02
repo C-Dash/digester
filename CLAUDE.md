@@ -200,3 +200,5 @@ ________________________________
 
 
 * Have the scanner look at all files in the media folder, not just ones that are admissable. FIles that are not admissable can be rendered as thumbnails, but with a not ready status and a repair issue would consist of "Reject". 
+
+The 

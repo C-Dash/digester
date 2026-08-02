@@ -31,9 +31,10 @@ class RejectService:
     def reject_media_files(self, media_ids: List[int]):
         """Move selected Reject-flagged media files to rejects/<folder>/.
 
-        Each affected folder is then rescanned so the DB drops the moved
-        file's row. If a source media folder ends up empty, it is removed
-        and an alert is logged.
+        If a source media folder ends up empty, it is removed and an alert
+        is logged. Each affected folder is then rescanned so the DB drops
+        the moved file's row — or, if any folder was removed outright, a
+        full batch scan runs instead so the folder pane no longer lists it.
         """
         dig = self._dig
         if not dig.db:
@@ -95,13 +96,15 @@ class RejectService:
         )
         dig._collect_and_store_counts()
 
-        for item_set_id in affected_folders:
-            dig.validate_folder(item_set_id)
-
-        for folder_dir in source_dirs.values():
+        # Remove any now-empty source folders BEFORE rescanning, so a folder
+        # that disappears is caught by the rescan rather than left as a
+        # stale DB row (which would keep it listed in the folder pane).
+        removed_item_set_ids: set = set()
+        for item_set_id, folder_dir in source_dirs.items():
             if folder_dir.is_dir() and not any(folder_dir.iterdir()):
                 try:
                     folder_dir.rmdir()
+                    removed_item_set_ids.add(item_set_id)
                     dig.log(
                         f"ALERT: media folder '{folder_dir.name}' is now "
                         f"empty and was removed.",
@@ -112,3 +115,14 @@ class RejectService:
                         f"Could not remove empty folder {folder_dir.name}: {exc}",
                         "error",
                     )
+
+        if removed_item_set_ids:
+            # A folder vanished — validate_folder()/rescan_folder() only
+            # updates media/doc rows for a folder still on disk, it doesn't
+            # prune the cdash_folder row itself. A full batch scan rebuilds
+            # cdash_folder from what's actually on disk, so it also covers
+            # every other affected folder in one pass.
+            dig.scan_batch()
+        else:
+            for item_set_id in affected_folders:
+                dig.validate_folder(item_set_id)
