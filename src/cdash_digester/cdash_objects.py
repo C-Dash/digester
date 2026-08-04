@@ -40,7 +40,9 @@ DOC_TYPES: dict[str, str] = {
     "UC": "Uncategorized",
 }
 
-ACCEPTED_SUFFIXES = {".tif", ".tiff", ".jpg", ".jpeg", ".pdf"}
+# NB: the accepted-suffix set lives in prescreener._ACCEPTED_SUFFIXES, which
+# owns format admissibility. An unused duplicate used to sit here — don't
+# reintroduce one.
 
 # Place property keys shared by the validator output, the cdash_place working
 # table, and the cdash_place_cache table.
@@ -183,9 +185,6 @@ class BatchDB:
     def set_batch_ready(self, ready, note=""):
         self._batch.set_batch_ready(ready, note)
 
-    def set_rejected_count(self, count):
-        self._batch.set_rejected_count(count)
-
     def count_batch_stats(self):
         return self._batch.count_batch_stats()
 
@@ -211,9 +210,6 @@ class BatchDB:
 
     def get_folder_by_item_set(self, item_set_id):
         return self._folders.get_folder_by_item_set(item_set_id)
-
-    def set_folder_name_ready(self, item_set_id, ready, notes=""):
-        self._folders.set_folder_name_ready(item_set_id, ready, notes)
 
     def assign_folder_index(self, item_set_id, index):
         self._folders.assign_folder_index(item_set_id, index)
@@ -283,9 +279,6 @@ class BatchDB:
 
     def increment_doc_pages(self, doc_item_id, capture_date=None, count=1):
         self._docs.increment_doc_pages(doc_item_id, capture_date, count)
-
-    def set_doc_ready(self, doc_item_id, ready, notes=""):
-        self._docs.set_doc_ready(doc_item_id, ready, notes)
 
     def renumber_doc_pages(self, doc_item_id):
         self._docs.renumber_doc_pages(doc_item_id)

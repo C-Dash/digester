@@ -57,12 +57,6 @@ class BatchRepo(_Repo):
         )
         self._con.commit()
 
-    def set_rejected_count(self, count: int):
-        self._con.execute(
-            "UPDATE cdash_batch SET rejected_count=?", (count,)
-        )
-        self._con.commit()
-
     def count_batch_stats(self) -> dict:
         """Live COUNT(*) for the four DB-derived batch counts."""
         q = self._con.execute
@@ -136,13 +130,6 @@ class FolderRepo(_Repo):
         return Folder.from_row(self._con.execute(
             "SELECT * FROM cdash_folder WHERE item_set_id=?", (item_set_id,)
         ).fetchone())
-
-    def set_folder_name_ready(self, item_set_id: int, ready: bool, notes: str = ""):
-        self._con.execute(
-            "UPDATE cdash_folder SET name_ready=?, notes=? WHERE item_set_id=?",
-            (int(ready), notes, item_set_id),
-        )
-        self._con.commit()
 
     def assign_folder_index(self, item_set_id: int, index: int):
         self._con.execute(
@@ -265,13 +252,6 @@ class DocRepo(_Repo):
                     "UPDATE cdash_doc SET date_accepted=? WHERE doc_item_id=?",
                     (capture_date, doc_item_id),
                 )
-        self._con.commit()
-
-    def set_doc_ready(self, doc_item_id: int, ready: bool, notes: str = ""):
-        self._con.execute(
-            "UPDATE cdash_doc SET ready=?, notes=? WHERE doc_item_id=?",
-            (int(ready), notes, doc_item_id),
-        )
         self._con.commit()
 
     def renumber_doc_pages(self, doc_item_id: int):

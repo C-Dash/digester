@@ -20,6 +20,20 @@ def test_from_row_none_passthrough():
     assert Media.from_row(None) is None
 
 
+def test_media_has_no_date_source():
+    """date_source is a prescreener/file-cache concern, not a media property.
+
+    It was previously declared on Media and in the cdash_media schema but
+    never passed to insert_media, so the column was permanently NULL.
+    Dropped rather than wired up. It must stay tolerated as an input, since
+    a cached props dict still carries it.
+    """
+    assert "date_source" not in Media._field_names()
+    assert not hasattr(Media.from_row({"media_id": 1}), "date_source")
+    # extra key must not raise — from_row takes only its own fields
+    assert Media.from_row({"media_id": 1, "date_source": "exif"}).media_id == 1
+
+
 def test_dual_access_attribute_and_mapping():
     m = Media.from_row({"media_id": 7, "filename": "a.tif", "ready": True})
     assert m.filename == "a.tif"       # attribute

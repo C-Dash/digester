@@ -103,7 +103,40 @@ def test_reject_appends_repair_reject_csv_row(make_batch):
     assert len(rows) == 1
     assert rows[0]["Filename"] == bad_row["filename"]
     assert rows[0]["Repair_Action"] == "Rejected"
-    assert rows[0]["Repair_Issues"] == bad_row["format"]
+    # Repair_Issues carries the parsed repair-issue codes, the same as the
+    # rows repair_file() writes — not the PIL format string, which this
+    # previously logged (so reject rows read e.g. "RGB 24-bit").
+    assert rows[0]["Repair_Issues"] == "reject"
+    assert rows[0]["Repair_Issues"] != bad_row["format"]
+    d.close()
+
+
+def test_repair_reject_csv_counts_distinguish_actions(make_batch):
+    """repair_reject.csv is a shared log for repairs, refusals, rotations and
+    reject moves, so the reject count is not the row total.
+
+    Regression: _read_repair_reject_csv_counts() used to return len(rows) as
+    the reject count, so a successful repair incremented BOTH rejects and
+    repaired, and every refusal/rotation inflated rejects.
+    """
+    def build(folder):
+        make_tiff(folder / "Main_0001p0001-VE-OP55.tif", "RGB",
+                  compression="tiff_lzw")
+
+    d = _scan_folder(make_batch, "F1-Main-OF101", build)
+
+    csv_path = d.catalog_path / "repair_reject.csv"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["MediaFolder", "Filename", "Repair_Issues", "Repair_Action"])
+        w.writerow(["F1", "a.tif", "reject", "Rejected"])
+        w.writerow(["F1", "b.tif", "flatten", "Repaired: rgba->rgb"])
+        w.writerow(["F1", "c.tif", "check_mbs", "Still 120.0 MB after compression"])
+        w.writerow(["F1", "d.jpg", "", "Rotated: orientation 1 -> 6"])
+
+    rejected, repaired = d._read_repair_reject_csv_counts()
+    assert (rejected, repaired) == (1, 1)   # not (4, 1)
     d.close()
 
 

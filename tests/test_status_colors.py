@@ -1,20 +1,12 @@
 """Tests for the shared GUI status-color helpers (pure functions, no Qt)."""
 
-from cdash_digester.gui.status_colors import (
-    status_color, row_background, folder_color,
-)
+from cdash_digester.gui.status_colors import status_color, folder_color
 
 
 def test_status_color_tristate():
     assert status_color(True) == "#2d8a2d"
     assert status_color(False) == "#cc0000"
     assert status_color(None) == "#888888"
-
-
-def test_row_background_tristate():
-    assert row_background(True) == "#e8f5e9"
-    assert row_background(False) == "#fdedef"
-    assert row_background(None) == "#f5f5f5"
 
 
 def test_folder_color_combines_flags():

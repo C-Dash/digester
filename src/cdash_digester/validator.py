@@ -114,13 +114,6 @@ class CDASHValidator:
             except (KeyError, TypeError):
                 return None
 
-        def _float(key):
-            try:
-                return float(item[key][0]["@value"])
-            except (KeyError, IndexError, TypeError, ValueError):
-                return None
-
-
         def _coord(key):
             try:
                 return float(item["o-module-mapping:marker"][0][key])

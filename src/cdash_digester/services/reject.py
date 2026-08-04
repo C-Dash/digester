@@ -9,7 +9,10 @@ machinery to drop the stale DB row.
 import shutil
 from typing import List
 
-from ..repair_media import parse_repair_issues, _append_repair_reject_csv
+from ..repair_media import (
+    REPAIR_REJECT_ACTION_REJECTED, parse_repair_issues,
+    _append_repair_reject_csv,
+)
 
 
 class RejectService:
@@ -79,9 +82,13 @@ class RejectService:
                 dig.log(f"Cannot move {row['filename']}: {exc}", "error")
                 continue
 
+            # Log the parsed repair issues, matching what repair_file() writes
+            # into the shared Repair_Issues column. (This used to pass the PIL
+            # format string, so reject rows read e.g. "RGB 24-bit" in a column
+            # of repair codes.)
             _append_repair_reject_csv(
                 dig.catalog_path, filepath,
-                [row.get("format") or ""], "Rejected",
+                issues, REPAIR_REJECT_ACTION_REJECTED,
             )
 
             rejected += 1

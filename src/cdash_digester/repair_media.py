@@ -47,14 +47,17 @@ from PIL import Image
 from . import prescreener
 from .exiftool_util import read_tags, write_orientation
 
-# EXIF Orientation (numeric) → Pillow rotation angle in degrees CCW with expand=True
-# Pillow positive angles are CCW; expand=True resizes canvas to fit rotated content.
-_ORIENTATION_ROTATION = {
-    3: 180,
-    6: 90,   # phone rotated 90° CW → correct by rotating pixels 270° CCW (= 90° CW)
-    8: 270,    # phone rotated 90° CCW → correct by rotating pixels 90° CCW
-}
-_DEFAULT_VERT_ROTATION = 90   # orientation=1 with portrait pixels: assume 90° CW fix
+# repair_reject.csv column headers and the Repair_Action values that carry
+# meaning to readers of the log. The file is a shared log for repairs, repair
+# refusals, rotations and reject moves, so counting rows is NOT the same as
+# counting rejects — Digester._read_repair_reject_csv_counts() matches against
+# these constants. Keep producers and consumers on them rather than on
+# repeated string literals.
+REPAIR_REJECT_COLUMNS = [
+    "MediaFolder", "Filename", "Repair_Issues", "Repair_Action",
+]
+REPAIR_REJECT_ACTION_REJECTED = "Rejected"
+REPAIR_REJECT_ACTION_REPAIRED_PREFIX = "Repaired: "
 
 # JPEG rotation: composition tables for "current EXIF Orientation value, plus
 # one more 90° turn -> new Orientation value". Empirically derived and
@@ -116,7 +119,7 @@ def _append_repair_reject_csv(
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             if write_header:
-                w.writerow(["MediaFolder", "Filename", "Repair_Issues", "Repair_Action"])
+                w.writerow(REPAIR_REJECT_COLUMNS)
             w.writerow([
                 filepath.parent.name,
                 filepath.name,
@@ -281,7 +284,7 @@ def _apply_pixel_repairs_and_commit(
         # had (including whatever the exif= carryover above preserved).
         write_orientation(filepath, 1)
 
-    msg = "Repaired: " + "|".join(applied)
+    msg = REPAIR_REJECT_ACTION_REPAIRED_PREFIX + "|".join(applied)
     return True, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
 
 

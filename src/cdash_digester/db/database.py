@@ -87,7 +87,6 @@ _SCHEMA = [
         filepath       TEXT,
         page_num     INTEGER,
         capture_date TEXT,
-        date_source  TEXT,
         file_size_mb REAL,
         pixel_width  INTEGER,
         pixel_height INTEGER,

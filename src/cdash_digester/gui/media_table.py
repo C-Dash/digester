@@ -2,7 +2,8 @@
 Media Table Pane
 
 A QTableView showing the media rows for the currently selected folder.
-Row background is coloured by go/no-go status.
+The Status column's text is coloured by go/no-go status; row backgrounds are
+left to the Windows theme.
 Emits ``selection_changed(media_ids)`` when the user changes the selection.
 Provides ``highlight_media_ids()`` to drive selection from the thumbnail pane
 without re-emitting the signal (avoids feedback loops).

@@ -89,9 +89,10 @@ def test_scan_all_media_ready_and_folder_ready(scanned):
 
 def test_scan_format_rejected_media_not_ready_despite_valid_name(make_batch):
     """A format-only rejection (no name/place problem) must still leave the
-    media row not-ready. Regression test: media_ready used to be computed as
-    `not notes_parts`, which stayed empty for a purely format-related issue
-    once qa_note stopped being folded into notes_parts."""
+    media row not-ready. Regression test: media_ready was once computed from
+    the name-problem list alone, which stays empty for a purely format-related
+    issue — so format problems silently passed. (The fields involved are now
+    format_issues and filename_issues.)"""
     root = make_batch("CDB260430-Test_batch")
     folder = root / "media" / "F1-Main-OF101"
     folder.mkdir(parents=True)

@@ -68,7 +68,7 @@ class CatalogExportService:
         with open(out, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=[
                 "id", "batch_id", "mnemonic_name", "batch_folder_path",
-                "initialized_date", "status", "qa_note",
+                "initialized_date", "status", "note",
                 "folders", "places", "documents", "media", "rejects", "repaired",
             ])
             w.writeheader()
@@ -79,7 +79,7 @@ class CatalogExportService:
                 "batch_folder_path": batch["batch_folder_path"],
                 "initialized_date":  batch["initialized_date"],
                 "status":            "go" if batch["ready"] else "no-go",
-                "qa_note":           batch.get("note", ""),
+                "note":              batch.get("note", ""),
                 "folders":           batch.get("folders_count", 0),
                 "places":            batch.get("places_count", 0),
                 "documents":         batch.get("documents_count", 0),

@@ -22,7 +22,8 @@ references against the live Omeka API, and exports the catalog CSVs.
 - **Metadata assignment** — group/ungroup pages into Documents, assign Place ID
   and Document Type; files are renamed to canonical form and the folder is
   re-scanned so status reflects the change.
-- **Auto-repair** of common defects (RGBA flattening, iPhone-portrait rotation).
+- **Auto-repair** of common defects (alpha/16-bit flattening, LZW compression),
+  plus manual **Rotate CW/CCW** and **Reject** actions.
 - **Persistent caches** for folder/place/file results so re-scans stay fast,
   with a one-click purge.
 - **CSV export** of batch / folder / place / document / media tables.
@@ -130,12 +131,14 @@ CDB<YYMMDD>[a-z]?-<batch_name>/
   media/
     F<index>-<Item_Set_Slug>-OF<OmekaItemSetID>/
       <place_slug>_<doc_index>p<page>-<doc_type>-OP<place_id>.<sfx>
+      repaired/                       ← originals, backed up before a repair
   catalog/
     batch_db.sqlite
     batch.csv  folder.csv  place.csv  document.csv  media.csv
+    repair_reject.csv                 ← log of repair attempts and reject moves
     batch.log
-  Rejects/                            ← only if files were rejected/repaired
-    <folder>/ ...   orig/ ...   rejects.csv
+  rejects/                            ← only if files were rejected
+    <folder>/ ...
 ```
 
 Names already in canonical form are left untouched on re-scan. The optional
@@ -171,15 +174,19 @@ left not-ready:
 
 | Code | Meaning | Auto-repairable? |
 |---|---|---|
-| `rgba` | Image is RGBA | Yes — composited onto white |
-| `iphone_vert` | iPhone portrait TIFF needing rotation | Yes — rotated via EXIF orientation |
-| `wrong_compression` | TIFF not LZW-compressed | No |
-| `multiframe_tiff` | TIFF has more than one frame | No — handle manually |
-| `not_pdfa` | PDF lacks a PDF/A conformance marker | No |
+| `Flatten` | TIFF is RGBA, LA, or I;16 (16-bit grayscale) | Yes — dropped to a clean mode (RGB/L) |
+| `Compress LZW` | TIFF not using LZW compression | Yes — re-saved with LZW |
+| `Check MBs` | Uncompressed TIFF over the size limit | Only if it fits once compressed; otherwise left untouched |
+| `Reject` | Unsupported file type, multi-frame TIFF, PDF without a PDF/A marker, or any other oversized/wrong-format file | No — use **Media > Reject Selected Media** |
 
-`repair_file()` backs up originals to `Rejects/orig/` and refuses
-`multiframe_tiff`. A media file is **ready** only when format, name, and
-Place/Folder references all pass.
+`repair_file()` backs up originals to `media/<folder>/repaired/` and refuses
+anything flagged `Reject`, pointing at the separate Reject action — the only
+thing that moves a file out of the batch. A refused or reverted repair leaves
+the original completely untouched. Every attempt, refusal, and reject move is
+logged to `catalog/repair_reject.csv`.
+
+A media file is **ready** only when format, name, and Place/Folder references
+all pass.
 
 ### Place ↔ folder association
 
@@ -250,7 +257,7 @@ stored as `INTEGER 0/1` and surfaced as Python `True/False`. Key derived flags:
 | `place.csv` | One row per validated Place (name, type, address, lat/lon, …) |
 | `document.csv` | One row per Document (title, type, page count, dates) |
 | `media.csv` | One row per media file (identifier, relation, page number) |
-| `rejects.csv` | Written to `Rejects/` for files that failed screening |
+| `repair_reject.csv` | Log of repair attempts/refusals and reject moves |
 
 The exact column→source mappings are defined in
 [`services/export.py`](src/cdash_digester/services/export.py).

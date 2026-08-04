@@ -127,7 +127,6 @@ class Media(Row):
     filepath: Optional[str] = None
     page_num: Optional[int] = None
     capture_date: Optional[str] = None
-    date_source: Optional[str] = None
     file_size_mb: Optional[float] = None
     pixel_width: Optional[int] = None
     pixel_height: Optional[int] = None

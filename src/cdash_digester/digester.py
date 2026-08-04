@@ -32,6 +32,9 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from .cdash_objects import BatchDB, parse_batch_name
+from .repair_media import (
+    REPAIR_REJECT_ACTION_REJECTED, REPAIR_REJECT_ACTION_REPAIRED_PREFIX,
+)
 from .validator import CDASHValidator
 from .services import (
     ScanService, ValidationService, ScreeningService,
@@ -216,17 +219,28 @@ class Digester:
     # --------------------------------------------------------------- counts
 
     def _read_repair_reject_csv_counts(self) -> tuple:
-        """Return (total_rows, repaired_rows) from catalog/repair_reject.csv."""
+        """Return (rejected_rows, repaired_rows) from catalog/repair_reject.csv.
+
+        repair_reject.csv is the shared log for repair attempts, repair
+        refusals, rotations, and reject moves, so neither count is simply the
+        row total — each is matched against the Repair_Action string its own
+        producer writes ("Rejected" from RejectService, "Repaired: …" from
+        repair_media). Rows for refusals and rotations count as neither.
+        """
         csv_path = self.catalog_path / "repair_reject.csv"
         try:
             with open(csv_path, newline="", encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
-            total    = len(rows)
+            rejected = sum(
+                1 for r in rows
+                if r.get("Repair_Action", "") == REPAIR_REJECT_ACTION_REJECTED
+            )
             repaired = sum(
                 1 for r in rows
-                if r.get("Repair_Action", "").startswith("Repaired:")
+                if r.get("Repair_Action", "").startswith(
+                    REPAIR_REJECT_ACTION_REPAIRED_PREFIX)
             )
-            return total, repaired
+            return rejected, repaired
         except FileNotFoundError:
             return 0, 0
 
@@ -269,7 +283,7 @@ class Digester:
         lines = [
             f"Batch:   {batch['batch_id']}  ready={batch['ready']}",
             f"Folders: {n_ready}/{len(folders)} ready",
-            f"Not ready: {batch.get('rejected_count', 0)}",
+            f"Rejected: {batch.get('rejected_count', 0)}",
             "",
         ]
         for f in folders:

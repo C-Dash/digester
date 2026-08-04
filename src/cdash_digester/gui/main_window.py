@@ -16,7 +16,7 @@ from typing import List, Optional
 from PySide6.QtCore import QLoggingCategory, QThread, QUrl, Signal, Slot, Qt
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPalette
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox,
+    QApplication, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
     QRadioButton, QSplitter, QVBoxLayout, QWidget,
 )
@@ -38,6 +38,13 @@ from .thumbnail_pane import ThumbnailPane
 class _Worker(QThread):
     """Runs one digester operation off the main thread.
 
+    The operation is a bound callable plus its arguments, so there is no op-name
+    string to typo and no dispatch table to keep in sync. A multi-step operation
+    should be a single callable that performs every step (see
+    ``MainWindow._open_and_scan``) rather than two chained ``_run`` calls: the
+    ``done`` signal fires from inside ``run()``, so a second ``_run`` invoked
+    from an ``on_finish`` handler can still see ``isRunning()`` and be refused.
+
     Threading model
     ---------------
     The Digester holds a single SQLite connection shared between this worker
@@ -58,41 +65,24 @@ class _Worker(QThread):
     done        = Signal()           # avoid shadowing QThread.finished
     error       = Signal(str)
 
-    def __init__(self, digester: Digester, operation: str, **kwargs):
+    def __init__(self, digester: Digester, fn, *args, **kwargs):
         super().__init__()
-        self.digester  = digester
-        self.operation = operation
-        self.kwargs    = kwargs
+        self.digester = digester
+        self._fn      = fn
+        self._args    = args
+        self._kwargs  = kwargs
 
     def run(self):
-        # Redirect digester log to a cross-thread signal
+        # Redirect digester log to a cross-thread signal. Anything the callable
+        # logs via digester.log — including nested service calls — reaches the
+        # console this way, which is why worker-side work should log rather
+        # than return values.
         original_log = self.digester.log
         self.digester.log = lambda msg, lvl: self.log_message.emit(msg, lvl)
         try:
-            op = self.operation
-            if op == "load_or_initialize":
-                self.digester.load_or_initialize()
-            elif op == "scan_batch":
-                self.digester.scan_batch()
-            elif op == "validate_folder":
-                self.digester.validate_folder(self.kwargs["item_set_id"])
-            elif op == "export_csv":
-                self.digester.export_csv()
-            elif op == "status_summary":
-                self.log_message.emit(
-                    self.digester.get_status_summary(), "info"
-                )
-            elif op == "repair_media":
-                self.digester.repair_media_files(self.kwargs["media_ids"])
-            elif op == "reject_media":
-                self.digester.reject_media_files(self.kwargs["media_ids"])
-            elif op == "rotate_media":
-                self.digester.rotate_media_files(
-                    self.kwargs["media_ids"], self.kwargs["direction"])
-            elif op == "purge_caches":
-                self.digester.purge_caches()
+            self._fn(*self._args, **self._kwargs)
         except Exception as exc:
-            self.error.emit(str(exc))
+            self.error.emit(f"{type(exc).__name__}: {exc}")
         finally:
             self.digester.log = original_log
             self.done.emit()
@@ -192,6 +182,9 @@ class MainWindow(QMainWindow):
         self.batch_root: Optional[Path]    = None
         self._current_folder = None   # currently selected folder row
         self._worker: Optional[_Worker] = None
+        # Set by _do_assign on the worker thread, shown by _after_assign on the
+        # main thread (dialogs cannot be raised off the main thread).
+        self._assign_error: Optional[str] = None
 
         self._build_ui()
         self._build_menus()
@@ -360,19 +353,30 @@ class MainWindow(QMainWindow):
         self.folder_info.clear()
         self.console.append_message(f"Selected: {folder}", "info")
         self.digester = Digester(self.batch_root, self.console.append_message)
+        self._run(self._open_and_scan, on_finish=self._after_batch_opened)
+
+    def _open_and_scan(self):
+        """Worker-thread half of Choose Batch Folder: open the batch, then scan
+        it. Both steps run in one worker so the window stays responsive and
+        gated for the whole operation (opening a batch is not cheap)."""
         self.digester.load_or_initialize()
-        if not self.digester.is_open:
-            return                          # invalid batch — errors already logged
+        if self.digester.is_open:
+            self.digester.log("Scanning batch…", "info")
+            self.digester.scan_batch()
+
+    def _after_batch_opened(self):
+        """Main-thread half: wire up the UI for the freshly scanned batch."""
         self._after_load()
-        self.console.append_message("Scanning batch…", "info")
-        self._run("scan_batch", on_finish=self._reload_folders)
+        if not self.digester or not self.digester.is_open:
+            return              # invalid batch — _after_load logged why
+        self._reload_after_folder_scan()
 
     def _after_load(self):
         if not self.digester or not self.digester.is_open:
             self.console.append_message(
-                "Batch load failed — check that the folder contains a "
-                "'Media/' subfolder with item set folders named "
-                "<Mnemonic>-F<OmekaItemSetID>.",
+                "Batch load failed — the batch folder must be named "
+                "CDB<YYMMDD>-<name> and contain a 'media/' subfolder whose "
+                "item-set folders are named [F<index>-]<slug>-OF<ItemSetID>.",
                 "error",
             )
             return
@@ -383,12 +387,14 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(
                 f"CDASH Presort Digester — {batch['batch_id']}"
             )
-            log_path = self.batch_root / "Catalog" / "batch.log"
-            self.console.set_log_path(log_path)
-        self._reload_folders()
-        for act in (self._act_init, self._act_status,
-                    self._act_purge_cache, self._act_val_folder,
-                    self._act_assign, self._act_repair, self._act_reject):
+            # Use the Digester's own path property rather than rebuilding it —
+            # the on-disk folder is lowercase "catalog", and the hardcoded
+            # "Catalog" here only worked because Windows paths are case-
+            # insensitive.
+            self.console.set_log_path(self.digester.catalog_path / "batch.log")
+        # Pane population is left to the caller's _reload_after_folder_scan()
+        # so the folder list isn't loaded (and logged) twice on open.
+        for act in self._batch_actions():
             act.setEnabled(True)
         self._sync_csv_enabled()   # CSV stays dim until the batch is ready
         self._sync_rotate_enabled([])   # no selection yet on a fresh load
@@ -396,17 +402,25 @@ class MainWindow(QMainWindow):
     @Slot()
     def _initialize_batch(self):
         self.console.append_message("Starting batch scan…", "info")
-        self._run("scan_batch", on_finish=self._reload_folders)
+        # A full rescan rebuilds every media row, so the media table and
+        # thumbnail pane need reloading too — not just the folder pane.
+        self._run(self.digester.scan_batch,
+                  on_finish=self._reload_after_folder_scan)
 
     @Slot()
     def _produce_csv(self):
         self.console.append_message("Exporting CSV files…", "info")
-        self._run("export_csv")
+        self._run(self.digester.export_csv)
 
     @Slot()
     def _write_status(self):
         if self.digester:
-            self._run("status_summary")
+            self._run(self._log_status_summary)
+
+    def _log_status_summary(self):
+        """Worker-thread: push the status summary out through digester.log,
+        which _Worker has redirected to the console."""
+        self.digester.log(self.digester.get_status_summary(), "info")
 
     @Slot()
     def _purge_caches(self):
@@ -416,13 +430,16 @@ class MainWindow(QMainWindow):
             self, "Purge Validation Caches",
             "Clear the folder, place, and file validation caches?\n\n"
             "The next scan will be slower — it re-fetches Omeka folder/place "
-            "data and re-screens all files.",
+            "data and re-screens all files.\n\n"
+            "WARNING: the folder cache also allocates folder index numbers. "
+            "Purging it restarts numbering from F1, so the next scan may "
+            "renumber and RENAME your media folders on disk.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if resp != QMessageBox.Yes:
             return
         self.console.append_message("Purging validation caches…", "info")
-        self._run("purge_caches")
+        self._run(self.digester.purge_caches)
 
     @Slot()
     def _validate_selected_folder(self):
@@ -435,8 +452,7 @@ class MainWindow(QMainWindow):
                 "warning",
             )
             return
-        self._run("validate_folder",
-                  item_set_id=item_set_id,
+        self._run(self.digester.validate_folder, item_set_id,
                   on_finish=self._reload_after_folder_scan)
 
     @Slot(object)
@@ -468,39 +484,50 @@ class MainWindow(QMainWindow):
                                 "Enter a numeric Omeka Place Item ID.")
             return
 
+        # Place validation is a live Omeka HTTP call, so the whole assignment
+        # runs on the worker — it used to block the main thread un-gated, and a
+        # slow lookup froze the window.
+        self._assign_error = None
+        self._run(self._do_assign, media_ids, place_id,
+                  dlg.doc_type_code, dlg.is_multi_page,
+                  on_finish=self._after_assign)
+
+    def _do_assign(self, media_ids, place_id, doc_type_code, is_multi_page):
+        """Worker-thread: validate the place, assign metadata, rescan.
+
+        The follow-up rescan happens here rather than as a second _run from
+        on_finish — see _Worker on why chained _run calls can be refused.
+        A validation failure is stashed for _after_assign to show modally,
+        since dialogs must be raised on the main thread.
+        """
+        dig = self.digester
         if place_id is not None:
-            status, place_name = self.digester.validate_place(place_id)
+            status, place_name = dig.validate_place(place_id)
             if "Valid" not in status:
-                self.console.append_message(
-                    f"Place validation failed: {status}", "error"
-                )
-                QMessageBox.warning(self, "Invalid Place ID", status)
+                self._assign_error = status
+                dig.log(f"Place validation failed: {status}", "error")
                 return
-            self.console.append_message(
-                f"Place validated: {place_name} (ID {place_id})", "success"
-            )
-        ok = self.digester.assign_media_to_doc(
-            media_ids, place_id, dlg.doc_type_code, dlg.is_multi_page
-        )
-        if ok:
-            self.console.append_message(
-                "Metadata assigned and files renamed.", "success"
-            )
-            item_set_id = (self._current_folder["item_set_id"]
-                           if self._current_folder else None)
-            if item_set_id is not None:
-                # Re-scan the folder so ready/notes reflect the renamed files
-                # (assignment itself leaves media status untouched).
-                self.console.append_message("Re-scanning folder…", "info")
-                self._run("validate_folder",
-                          item_set_id=item_set_id,
-                          on_finish=self._reload_after_folder_scan)
-            else:
-                self._reload_after_folder_scan()
-        else:
-            self.console.append_message(
-                "Metadata assignment failed.", "error"
-            )
+            dig.log(f"Place validated: {place_name} (ID {place_id})", "success")
+
+        if not dig.assign_media_to_doc(media_ids, place_id,
+                                       doc_type_code, is_multi_page):
+            dig.log("Metadata assignment failed.", "error")
+            return
+
+        dig.log("Metadata assigned and files renamed.", "success")
+        item_set_id = (self._current_folder["item_set_id"]
+                       if self._current_folder else None)
+        if item_set_id is not None:
+            # Re-scan the folder so ready/notes reflect the renamed files
+            # (assignment itself leaves media status untouched).
+            dig.log("Re-scanning folder…", "info")
+            dig.validate_folder(item_set_id)
+
+    def _after_assign(self):
+        if self._assign_error:
+            QMessageBox.warning(self, "Invalid Place ID", self._assign_error)
+            self._assign_error = None
+        self._reload_after_folder_scan()
 
     @Slot()
     def _repair_selected_media(self):
@@ -536,8 +563,8 @@ class MainWindow(QMainWindow):
                 f"Skipping {skipped} selected file(s) with no repair issues.",
                 "info",
             )
-        self._run("repair_media", on_finish=self._reload_after_folder_scan,
-                  media_ids=repairable_ids)
+        self._run(self.digester.repair_media_files, repairable_ids,
+                  on_finish=self._reload_after_folder_scan)
 
     @Slot()
     def _reject_selected_media(self):
@@ -573,8 +600,8 @@ class MainWindow(QMainWindow):
                 f"Skipping {skipped} selected file(s) not flagged Reject.",
                 "info",
             )
-        self._run("reject_media", on_finish=self._reload_after_folder_scan,
-                  media_ids=rejectable_ids)
+        self._run(self.digester.reject_media_files, rejectable_ids,
+                  on_finish=self._reload_after_folder_scan)
 
     def _rotate_selected_media(self, direction: str):
         if not self.digester or not self.digester.is_open:
@@ -600,8 +627,8 @@ class MainWindow(QMainWindow):
                 f"Skipping {skipped} selected file(s) not eligible for rotation.",
                 "info",
             )
-        self._run("rotate_media", on_finish=self._reload_after_folder_scan,
-                  media_ids=rotatable_ids, direction=direction)
+        self._run(self.digester.rotate_media_files, rotatable_ids, direction,
+                  on_finish=self._reload_after_folder_scan)
 
     # --------------------------------------------------------------- helpers
 
@@ -629,6 +656,13 @@ class MainWindow(QMainWindow):
         # enabled state needs an explicit re-derive here too.
         self._sync_rotate_enabled([])
 
+    def _batch_actions(self):
+        """Actions that require an open batch. Excludes Choose Batch Folder
+        (needs no batch) and CSV/Rotate (gated on their own conditions)."""
+        return (self._act_init, self._act_status, self._act_purge_cache,
+                self._act_val_folder, self._act_assign, self._act_repair,
+                self._act_reject)
+
     def _set_busy(self, busy: bool):
         """Enable/disable all DB-touching UI while a worker runs.
 
@@ -639,11 +673,14 @@ class MainWindow(QMainWindow):
         See ``_Worker`` for the full threading model.
         """
         self.folder_pane.setEnabled(not busy)
-        for act in (self._act_choose, self._act_init,
-                    self._act_status, self._act_purge_cache,
-                    self._act_val_folder, self._act_assign, self._act_repair,
-                    self._act_reject):
-            act.setEnabled(not busy)
+        # Choose Batch Folder is the only action that works without an open
+        # batch. The rest stay dim until one is open — Choose Batch now routes
+        # a failed open through a worker, so lifting the busy gate must not
+        # blanket-enable actions that would then run against no batch.
+        self._act_choose.setEnabled(not busy)
+        batch_open = bool(self.digester and self.digester.is_open)
+        for act in self._batch_actions():
+            act.setEnabled(not busy and batch_open)
         # CSV and Rotate are special: disabled while busy, and otherwise only
         # re-enabled based on their own condition (batch ready / selection
         # content) rather than blanket-enabled with the rest.
@@ -671,10 +708,11 @@ class MainWindow(QMainWindow):
         self._act_rotate_cw.setEnabled(rotatable)
         self._act_rotate_ccw.setEnabled(rotatable)
 
-    def _run(self, operation: str, on_finish=None, **kwargs):
+    def _run(self, fn, *args, on_finish=None, **kwargs):
         """Dispatch a digester operation to a background thread.
 
-        The UI is gated busy for the worker's lifetime (see ``_Worker``) so no
+        ``fn`` is called on the worker thread as ``fn(*args, **kwargs)``. The UI
+        is gated busy for the worker's lifetime (see ``_Worker``) so no
         main-thread DB access can overlap the worker on the shared connection.
         """
         if self._worker and self._worker.isRunning():
@@ -682,7 +720,7 @@ class MainWindow(QMainWindow):
                 "An operation is already running — please wait.", "warning"
             )
             return
-        self._worker = _Worker(self.digester, operation, **kwargs)
+        self._worker = _Worker(self.digester, fn, *args, **kwargs)
         self._worker.log_message.connect(self.console.append_message)
         self._worker.error.connect(
             lambda e: self.console.append_message(f"ERROR: {e}", "error")

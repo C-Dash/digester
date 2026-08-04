@@ -9,19 +9,36 @@ A PySide6 desktop application that validates, prescreens, and catalogs archival 
 ```
 src/
   cdash_digester/
-    cdash_objects.py     — SQLite data model (BatchDB), name parsers, constants
-    digester.py          — Main orchestrator (Digester class); runs on QThread
+    digester.py          — Session facade; owns batch state, delegates to services/
+    cdash_objects.py     — Domain constants, name parsers, BatchDB (facade over db/)
+    models.py            — Dataclasses per working table (dict-compatible via Row mixin)
     prescreener.py       — Per-file acceptance checks; screen_file() is the core function
-    repair_media.py      — Auto-repair for known fixable issues (rgba, iphone_vert)
-    validator.py         — CDASHValidator for folder/media name rules
-    gui/
-      main_window.py     — Top-level PySide6 window and toolbar actions
-      folder_pane.py     — Left pane: item set folder tree
-      media_table.py     — Right pane: media file table with status columns
-      thumbnail_pane.py  — Thumbnail preview
-      console_window.py  — Log output window
+    repair_media.py      — repair_file()/rotate_file() + repair_reject.csv logging
+    validator.py         — CDASHValidator: live Omeka-S REST lookups (folders, places)
+    exiftool_util.py     — One-shot ExifTool subprocess helper (read/write tags)
     exif_ex.py           — CLI: dump all ExifTool tags for a file
+    db/
+      database.py        — Connection, schema, migrations, bool-aware row factory
+      repositories.py    — One repo per aggregate; all SQL lives here
+    services/            — The real work, one class per operation
+      scanning.py        — ScanService + FolderScanner (batch/folder/media scan)
+      screening.py       — ScreeningService (prescreener results + file cache)
+      validation.py      — ValidationService (folder/place validation + caches)
+      assignment.py      — AssignmentService (interactive metadata assignment)
+      repair.py / reject.py / rotate.py — per-action media services
+      export.py          — CatalogExportService (CSV output)
+    gui/
+      main_window.py     — Top-level PySide6 window, menus, QThread worker
+      folder_pane.py     — Left pane: item set folder tree
+      folder_info_pane.py— Selected-folder detail panel
+      media_table.py     — Right pane: media file table with status columns
+      thumbnail_pane.py  — Thumbnail preview grid
+      console_window.py  — Log output window
+      status_colors.py   — Shared go/no-go colour helpers
 ```
+
+Layering: `gui/ → Digester → services/ → BatchDB → db/ → sqlite3`. The GUI never
+touches the DB or a service directly — every call goes through `Digester`.
 
 ## Naming Conventions
 
@@ -79,7 +96,7 @@ Key tables: `cdash_batch`, `cdash_folder`, `cdash_place`, `cdash_doc`, `cdash_me
 
 Issue codes are normalized: lowercase, hyphens → underscores (so `Reject` is matched case-insensitively as `reject`). For a multi-frame TIFF, unsupported file type, or any hard size-limit rejection, `repair_issues` is set to `["Reject"]` only — any other issues detected for that file are discarded in favor of the single `Reject` code.
 
-`iphone_vert` (EXIF-orientation rotation) has been retired from the prescreener's repair_issues vocabulary — it's no longer detected or flagged. The rotation helpers (`_ORIENTATION_ROTATION`, `_DEFAULT_VERT_ROTATION`, `_get_exif_orientation`) remain in `repair_media.py`, unused for now, reserved for planned `Media > Rotate CW / Rotate CCW` menu actions.
+`iphone_vert` (EXIF-orientation rotation) has been retired from the prescreener's repair_issues vocabulary — it's no longer detected or flagged. Rotation is now a separate user-initiated action (`Media > Rotate CW / Rotate CCW`, see Phase 2 below), driven by `_ORIENTATION_ROTATE_CW`/`_CCW` and `_get_exif_orientation` in `repair_media.py`. The old `_ORIENTATION_ROTATION`/`_DEFAULT_VERT_ROTATION` tables that were reserved for it went unused once that shipped and have been deleted.
 
 ## Key Entry Points
 
