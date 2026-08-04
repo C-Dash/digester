@@ -278,6 +278,7 @@ pyinstaller cdash-digester.spec
 
 For a clean rebuild, clear the caches first so source changes are picked up:
 
+First: Update the Build Date and Version number in __init__.py.
 ```
 rm -rf build dist
 pyinstaller cdash-digester.spec
