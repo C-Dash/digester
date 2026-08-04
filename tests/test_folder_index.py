@@ -56,15 +56,8 @@ def test_purge_caches_does_not_renumber_or_rename(make_batch):
 def test_media_identifiers_survive_a_purge(make_batch):
     """batch_media_id embeds the folder index, and is exported as media.csv's
     `identifier`. It must not change just because the cache was cleared.
-
-    Scans twice before the purge to reach a steady state: the first scan
-    computes batch_media_id from the pre-rename place slug and then renames
-    the file, so scan 1 -> scan 2 legitimately differs. That drift is
-    pre-existing and unrelated to the cache (it happens without a purge too);
-    what this pins is that purging changes nothing.
     """
     d = _batch(make_batch, ["F3-Main-OF101"], {101: "Main St Folder"})
-    d.scan_batch()
     d.scan_batch()
     before = [m.batch_media_id for m in d.db.get_media_for_folder(101)]
 

@@ -336,13 +336,23 @@ class FolderScanner:
         else:
             self.slug_place_tracker[place_slug] = place_id
 
+        # The slug this file will actually be named with. Identifiers (step 4/5)
+        # and the rename (step 6) are both built from this one value, so they
+        # cannot disagree — they used to, leaving batch_media_id describing the
+        # pre-rename name until the next scan corrected it.
+        # When the place is missing or unresolved the rename is skipped, so the
+        # parsed slug is the right fallback: it still matches the filename.
+        id_slug = (slugify(place_name)
+                   if place_id is not None and place_name
+                   else parsed["place_slug"])
+
         media_ready = accepted and not notes_parts
 
         # 4. Doc tracking / creation
         if doc_index not in self.doc_tracker:  # New Document
             self.doc_seq += 1
             batch_doc_id = (
-                f"{batch_folder_id}-{parsed['place_slug']}-{self.doc_seq:04d}-{doc_type}"
+                f"{batch_folder_id}-{id_slug}-{self.doc_seq:04d}-{doc_type}"
             )
             doc_title = (
                 f"{place_name or parsed['place_slug']} — "
@@ -360,7 +370,12 @@ class FolderScanner:
             )
             self.doc_tracker[doc_index] = {
                 "doc_item_id":  doc_item_id,
+                # place_slug stays "as parsed from the filename" — the
+                # doc-index conflict check below compares it against the next
+                # file's parsed slug, so it must not hold the resolved value.
                 "place_slug":   parsed["place_slug"],
+                # id_slug is the canonical slug used for names and identifiers.
+                "id_slug":      id_slug,
                 "doc_type":     doc_type,
                 "doc_seq":      self.doc_seq,
                 "place_id":     place_id,
@@ -390,7 +405,7 @@ class FolderScanner:
         page_num = self.doc_tracker[doc_index]["page_count"]
         entry = self.doc_tracker[doc_index]
         batch_media_id = (
-            f"{batch_folder_id}-{entry['place_slug']}"
+            f"{batch_folder_id}-{entry['id_slug']}"
             f"_{entry['doc_seq']:04d}p{page_num:04d}-{entry['doc_type']}"
         )
         session.db.increment_doc_pages(
@@ -400,9 +415,12 @@ class FolderScanner:
         )
 
         # 6. Rename file only when format is ok and place is fully known.
+        # Uses the document's id_slug — the same value batch_media_id above was
+        # built from — so the filename and the identifier always agree, and
+        # every page of a document is named for that document's place.
         if place_id is not None and place_name:
             new_stem = (
-                f"{slugify(place_name)}_{doc_index:04d}p{page_num:04d}"
+                f"{entry['id_slug']}_{doc_index:04d}p{page_num:04d}"
                 f"-{doc_type}-OP{place_id}"
             )
             new_name = f"{new_stem}{filepath.suffix.lower()}"
