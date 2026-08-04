@@ -12,6 +12,22 @@ from ..constants import PLACE_PROP_KEYS
 PLACE_FOLDER_MISMATCH_NOTE = "Place_ID is not associated with this folder in CDASH."
 
 
+def place_failure_note(place_id: int, status: str) -> str:
+    """Short, archivist-facing note for a place ID that would not resolve.
+
+    Distinguishes "this ID is wrong" from "we could not ask", because they call
+    for opposite responses: the first means fix the filename, the second means
+    wait and re-scan. Reporting an outage as a nonexistent place would invite
+    an archivist to correct a filename that was already right.
+
+    The caller logs the full validator status; this is the short form stored in
+    filename_issues and shown in the media table's Name Issues column.
+    """
+    if status.startswith("Not found"):
+        return f"Place ID {place_id} does not exist in Omeka."
+    return f"Place ID {place_id} could not be verified (Omeka unreachable)."
+
+
 class ValidationService:
     def __init__(self, session):
         self._session = session

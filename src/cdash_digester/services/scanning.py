@@ -15,7 +15,7 @@ from ..naming import (
     parse_batch_name, parse_folder_name, parse_media_name, slugify,
 )
 from ..models import join_format_issues, join_repair_issues
-from .validation import PLACE_FOLDER_MISMATCH_NOTE
+from .validation import PLACE_FOLDER_MISMATCH_NOTE, place_failure_note
 
 
 class ScanService:
@@ -317,23 +317,30 @@ class FolderScanner:
             place_id = self.slug_place_tracker[place_slug]
 
         # 3. Place validation (cache → API)
+        # place_ok is the single answer to "did this place resolve?". It used
+        # to be inferred from place_name, which was set to the parsed slug on
+        # failure — truthy, so an unverified file was renamed as if canonical.
         place_name = None
+        place_ok = False
         if place_id is not None:
             p_status, p_name = self._validation.ensure_place(place_id)
             if "Valid" in p_status:
+                place_ok = True
                 place_name = p_name or parsed["place_slug"]
                 if not self._validation.place_associated_with_folder(
                         place_id, item_set_id):
                     notes_parts.insert(0, PLACE_FOLDER_MISMATCH_NOTE)
                     session.log(f"    {PLACE_FOLDER_MISMATCH_NOTE}", "warning")
             else:
-                session.log(f"    Place {place_id}: {p_status}", "error")
-                notes_parts.append(f"Place {place_id}: {p_status}")
-                place_name = parsed["place_slug"]
+                note = place_failure_note(place_id, p_status)
+                session.log(f"    {note} ({p_status})", "error")
+                notes_parts.append(note)
 
         if place_id is None:
             notes_parts.append("No place ID in filename")
-        else:
+        elif place_ok:
+            # Only remember a place that actually resolved — an unverified ID
+            # must not be inherited by a sibling file with the same slug.
             self.slug_place_tracker[place_slug] = place_id
 
         # The slug this file will actually be named with. Identifiers (step 4/5)
@@ -342,9 +349,7 @@ class FolderScanner:
         # pre-rename name until the next scan corrected it.
         # When the place is missing or unresolved the rename is skipped, so the
         # parsed slug is the right fallback: it still matches the filename.
-        id_slug = (slugify(place_name)
-                   if place_id is not None and place_name
-                   else parsed["place_slug"])
+        id_slug = slugify(place_name) if place_ok else parsed["place_slug"]
 
         media_ready = accepted and not notes_parts
 
@@ -359,7 +364,11 @@ class FolderScanner:
                 f"{DOC_TYPES.get(doc_type, doc_type)}"
             )
             doc_item_id = session.db.insert_doc(
-                place_item_id=place_id,
+                # Never write an unverified place: cdash_doc.place_item_id is a
+                # foreign key into cdash_place, and ensure_place only inserts a
+                # place row on success. Writing the raw id raised IntegrityError
+                # and aborted the whole scan over one typo'd filename.
+                place_item_id=place_id if place_ok else None,
                 item_set_id=item_set_id,
                 folder_doc_sequence=self.doc_seq,
                 doc_type_code=doc_type,
@@ -378,7 +387,9 @@ class FolderScanner:
                 "id_slug":      id_slug,
                 "doc_type":     doc_type,
                 "doc_seq":      self.doc_seq,
-                "place_id":     place_id,
+                # None when unresolved, so later pages of this document don't
+                # inherit an id that will not validate.
+                "place_id":     place_id if place_ok else None,
                 "page_count":   0,
             }
         else:
@@ -414,11 +425,14 @@ class FolderScanner:
             count=props.get("pdf_pages") or 1,
         )
 
-        # 6. Rename file only when format is ok and place is fully known.
+        # 6. Rename only when the place actually resolved. An unverifiable
+        # place leaves the file exactly as it arrived, so nothing is
+        # canonicalised on the strength of metadata we could not confirm; the
+        # next scan renames it once the place ID is corrected.
         # Uses the document's id_slug — the same value batch_media_id above was
         # built from — so the filename and the identifier always agree, and
         # every page of a document is named for that document's place.
-        if place_id is not None and place_name:
+        if place_ok:
             new_stem = (
                 f"{entry['id_slug']}_{doc_index:04d}p{page_num:04d}"
                 f"-{doc_type}-OP{place_id}"
