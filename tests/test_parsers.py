@@ -1,8 +1,8 @@
-"""Characterization tests for the name parsers and slugify in cdash_objects."""
+"""Characterization tests for the name parsers and slugify in naming.py."""
 
 import pytest
 
-from cdash_digester.cdash_objects import (
+from cdash_digester.naming import (
     parse_batch_name, parse_folder_name, parse_media_name, slugify,
 )
 

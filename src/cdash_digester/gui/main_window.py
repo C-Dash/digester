@@ -250,7 +250,7 @@ class MainWindow(QMainWindow):
         batch = self.digester.get_batch()
         if batch:
             self.setWindowTitle(
-                f"CDASH Presort Digester — {batch['batch_id']}"
+                f"CDASH Presort Digester — {batch.batch_id}"
             )
             # Use the Digester's own path property rather than rebuilding it —
             # the on-disk folder is lowercase "catalog", and the hardcoded
@@ -309,14 +309,14 @@ class MainWindow(QMainWindow):
     def _validate_selected_folder(self):
         if not self._current_folder:
             return
-        item_set_id = self._current_folder["item_set_id"]
+        item_set_id = self._current_folder.item_set_id
         if item_set_id is None:
             self.console.append_message(
                 "Cannot rescan a folder whose name is not in CDASH format.",
                 "warning",
             )
             return
-        self._run(self.digester.validate_folder, item_set_id,
+        self._run(self.digester.rescan_folder, item_set_id,
                   on_finish=self._reload_after_folder_scan)
 
     @Slot(object)
@@ -325,13 +325,13 @@ class MainWindow(QMainWindow):
         if not self._batch_is_open():
             return
         self.folder_info.show_folder(folder)
-        item_set_id = folder["item_set_id"]
+        item_set_id = folder.item_set_id
         rows = (self.digester.get_media_for_folder(item_set_id)
                 if item_set_id is not None else [])
         # Resolve rotatability once per folder load; _sync_actions then just
         # intersects the selection against this set.
         self._rotatable_ids = set(
-            self.digester.rotatable_media_ids([r["media_id"] for r in rows])
+            self.digester.rotatable_media_ids([r.media_id for r in rows])
         ) if rows else set()
         self.media_table.load_media(rows)
         self.thumbnail_pane.load_media(rows, self.batch_root)
@@ -384,13 +384,13 @@ class MainWindow(QMainWindow):
             return
 
         dig.log("Metadata assigned and files renamed.", "success")
-        item_set_id = (self._current_folder["item_set_id"]
+        item_set_id = (self._current_folder.item_set_id
                        if self._current_folder else None)
         if item_set_id is not None:
             # Re-scan the folder so ready/notes reflect the renamed files
             # (assignment itself leaves media status untouched).
             dig.log("Re-scanning folder…", "info")
-            dig.validate_folder(item_set_id)
+            dig.rescan_folder(item_set_id)
 
     def _after_assign(self):
         if self._assign_error:
@@ -540,7 +540,7 @@ class MainWindow(QMainWindow):
             return
 
         batch = self.digester.get_batch() if self._batch_is_open() else None
-        self._act_csv.setEnabled(bool(batch and batch["ready"]))
+        self._act_csv.setEnabled(bool(batch and batch.ready))
 
         # Intersect against the rotatable set cached when the folder loaded,
         # rather than re-querying per click: rotatable_media_ids() issues one

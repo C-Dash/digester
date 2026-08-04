@@ -40,9 +40,9 @@ def test_rotatable_media_ids_excludes_pdf_and_reject(make_batch):
 
     d = _scan_folder(make_batch, "F1-Main-OF101", build)
     rows = d.db.get_media_for_folder(101)
-    all_ids = [r["media_id"] for r in rows]
-    good_id = next(r["media_id"] for r in rows
-                   if r["filename"].endswith(".tif") and r["repair_issues"] != "Reject")
+    all_ids = [r.media_id for r in rows]
+    good_id = next(r.media_id for r in rows
+                   if r.filename.endswith(".tif") and r.repair_issues != "Reject")
 
     assert d.rotatable_media_ids(all_ids) == [good_id]
     d.close()
@@ -55,16 +55,16 @@ def test_rotate_media_files_rotates_tiff_and_updates_dimensions(make_batch):
 
     d = _scan_folder(make_batch, "F1-Main-OF101", build)
     row = d.db.get_media_for_folder(101)[0]
-    assert (row["pixel_width"], row["pixel_height"]) == (4, 8)
+    assert (row.pixel_width, row.pixel_height) == (4, 8)
 
-    d.rotate_media_files([row["media_id"]], "cw")
+    d.rotate_media_files([row.media_id], "cw")
 
     # Rescanned after rotation — dimensions should now be swapped.
     updated = d.db.get_media_for_folder(101)[0]
-    assert (updated["pixel_width"], updated["pixel_height"]) == (8, 4)
+    assert (updated.pixel_width, updated.pixel_height) == (8, 4)
 
-    os_folder_name = d.db.get_folder_by_item_set(101)["os_folder_name"]
-    filepath = d.media_path / os_folder_name / updated["filename"]
+    os_folder_name = d.db.get_folder_by_item_set(101).os_folder_name
+    filepath = d.media_path / os_folder_name / updated.filename
     with Image.open(filepath) as im:
         assert im.size == (8, 4)
     assert (filepath.parent / "repaired").exists()
@@ -77,12 +77,12 @@ def test_rotate_media_files_skips_reject_flagged(make_batch):
 
     d = _scan_folder(make_batch, "F1-Main-OF101", build)
     row = d.db.get_media_for_folder(101)[0]
-    os_folder_name = d.db.get_folder_by_item_set(101)["os_folder_name"]
-    filepath = d.media_path / os_folder_name / row["filename"]
+    os_folder_name = d.db.get_folder_by_item_set(101).os_folder_name
+    filepath = d.media_path / os_folder_name / row.filename
     original_bytes = filepath.read_bytes()
 
-    assert d.rotatable_media_ids([row["media_id"]]) == []
-    d.rotate_media_files([row["media_id"]], "cw")
+    assert d.rotatable_media_ids([row.media_id]) == []
+    d.rotate_media_files([row.media_id], "cw")
 
     assert filepath.read_bytes() == original_bytes
     assert not (filepath.parent / "repaired").exists()

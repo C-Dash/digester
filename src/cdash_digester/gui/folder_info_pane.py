@@ -60,9 +60,9 @@ class FolderInfoPane(QFrame):
             self.clear()
             return
 
-        name = folder["os_folder_name"] or folder["cdash_folder_name"] or "—"
-        name_ready = folder["name_ready"]
-        media_ready = folder["media_ready"]
+        name = folder.os_folder_name or folder.cdash_folder_name or "—"
+        name_ready = folder.name_ready
+        media_ready = folder.media_ready
 
         self._name.setText(name)
         self._name.setStyleSheet(
@@ -70,7 +70,7 @@ class FolderInfoPane(QFrame):
         )
         self._set_status(self._name_status, name_ready)
         self._set_status(self._media_status, media_ready)
-        self._note.setText(folder["notes"] or "")
+        self._note.setText(folder.notes or "")
 
     @staticmethod
     def _set_status(label: QLabel, ready):

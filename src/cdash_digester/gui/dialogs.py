@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __build_date__, __version__
-from ..cdash_objects import DOC_TYPES
+from ..constants import DOC_TYPES
 
 
 class AssignDialog(QDialog):

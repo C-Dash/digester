@@ -204,7 +204,7 @@ def test_rescan_batch_refreshes_media_table(qtbot, make_batch):
     assert win.media_table.model().rowCount() == 1
 
     # Add a second file on disk, then Re-Scan Batch.
-    scanned_dir = win.digester.media_path / row["os_folder_name"]
+    scanned_dir = win.digester.media_path / row.os_folder_name
     make_tiff(scanned_dir / "Main_0002p0001-VE-OP55.tif", "RGB",
               compression="tiff_lzw")
     win._initialize_batch()
@@ -236,8 +236,8 @@ def test_rotate_actions_track_selection_rotatability(qtbot, make_batch):
     win.folder_pane.select_folder(folder_key(row))
     win._on_folder_selected(row)
 
-    media = win.digester.get_media_for_folder(row["item_set_id"])
-    by_suffix = {Path(m["filename"]).suffix.lower(): m["media_id"] for m in media}
+    media = win.digester.get_media_for_folder(row.item_set_id)
+    by_suffix = {Path(m.filename).suffix.lower(): m.media_id for m in media}
     assert set(by_suffix) == {".tif", ".pdf"}
 
     # TIFF selected -> rotatable

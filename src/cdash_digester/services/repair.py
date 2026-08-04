@@ -9,19 +9,20 @@ from ..repair_media import parse_repair_issues, repair_file
 
 
 class RepairService:
-    def __init__(self, dig):
-        self._dig = dig
+    def __init__(self, session, scan):
+        self._session = session
+        self._scan = scan
 
     def repairable_media_ids(self, media_ids: List[int]) -> List[int]:
         """Return the subset of media_ids that have recorded repair issues,
         using the canonical parse_repair_issues check."""
-        db = self._dig.db
+        db = self._session.db
         if not db:
             return []
         out = []
         for media_id in media_ids:
             row = db.get_media(media_id)
-            if row and parse_repair_issues(row.get("repair_issues")):
+            if row and parse_repair_issues(row.repair_issues):
                 out.append(media_id)
         return out
 
@@ -31,9 +32,9 @@ class RepairService:
         Each repaired file is copied back over its original, then every
         affected folder is rescanned so the DB reflects the corrected files.
         """
-        dig = self._dig
-        if not dig.db:
-            dig.log("No open batch.", "error")
+        session = self._session
+        if not session.db:
+            session.log("No open batch.", "error")
             return
 
         repaired = 0
@@ -42,41 +43,41 @@ class RepairService:
         affected_folders: set = set()
 
         for media_id in media_ids:
-            row = dig.db.get_media(media_id)
+            row = session.db.get_media(media_id)
             if not row:
                 skipped += 1
-                dig.log(f"Media ID {media_id} not found.", "warning")
+                session.log(f"Media ID {media_id} not found.", "warning")
                 continue
 
-            issues = parse_repair_issues(row.get("repair_issues"))
+            issues = parse_repair_issues(row.repair_issues)
             if not issues:
                 skipped += 1
-                dig.log(f"Skipping {row['filename']}: no repair issues.", "info")
+                session.log(f"Skipping {row.filename}: no repair issues.", "info")
                 continue
 
-            filepath = dig.batch_path / row["filepath"]
+            filepath = session.batch_path / row.filepath
             if not filepath.exists():
                 failed += 1
-                dig.log(f"Cannot repair {row['filename']}: file not found.", "error")
+                session.log(f"Cannot repair {row.filename}: file not found.", "error")
                 continue
 
-            dig.log(f"Repairing {row['filename']} ({', '.join(issues)})…", "info")
-            success, message = repair_file(filepath, issues, catalog_path=dig.catalog_path)
+            session.log(f"Repairing {row.filename} ({', '.join(issues)})…", "info")
+            success, message = repair_file(filepath, issues, catalog_path=session.catalog_path)
             if success:
                 repaired += 1
-                affected_folders.add(row["item_set_id"])
-                dig.log(f"  {message}", "success")
+                affected_folders.add(row.item_set_id)
+                session.log(f"  {message}", "success")
             else:
                 failed += 1
-                dig.log(f"  {message}", "error")
+                session.log(f"  {message}", "error")
 
-        dig.log(
+        session.log(
             f"Repair complete: {repaired} repaired, {failed} failed, {skipped} skipped.",
             "info",
         )
         # Persist refreshed counts to the DB, but don't show the batch summary
         # here — it's noise after a repair.
-        dig._collect_and_store_counts()
+        session.collect_and_store_counts()
 
         for item_set_id in affected_folders:
-            dig.validate_folder(item_set_id)
+            self._scan.rescan_folder(item_set_id)

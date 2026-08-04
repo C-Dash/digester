@@ -15,13 +15,14 @@ _ROTATABLE_SUFFIXES = {".jpg", ".jpeg", ".tif", ".tiff"}
 
 
 class RotateService:
-    def __init__(self, dig):
-        self._dig = dig
+    def __init__(self, session, scan):
+        self._session = session
+        self._scan = scan
 
     def rotatable_media_ids(self, media_ids: List[int]) -> List[int]:
         """Return the subset of media_ids eligible for rotation: JPEG/TIFF
         (not PDF, not some other format) and not flagged Reject."""
-        db = self._dig.db
+        db = self._session.db
         if not db:
             return []
         out = []
@@ -29,9 +30,9 @@ class RotateService:
             row = db.get_media(media_id)
             if not row:
                 continue
-            if Path(row["filename"]).suffix.lower() not in _ROTATABLE_SUFFIXES:
+            if Path(row.filename).suffix.lower() not in _ROTATABLE_SUFFIXES:
                 continue
-            if "reject" in parse_repair_issues(row.get("repair_issues")):
+            if "reject" in parse_repair_issues(row.repair_issues):
                 continue
             out.append(media_id)
         return out
@@ -43,9 +44,9 @@ class RotateService:
         thumbnail/media panes, reloaded from disk by the caller) reflect the
         rotated files.
         """
-        dig = self._dig
-        if not dig.db:
-            dig.log("No open batch.", "error")
+        session = self._session
+        if not session.db:
+            session.log("No open batch.", "error")
             return
 
         rotated = 0
@@ -54,36 +55,36 @@ class RotateService:
         affected_folders: set = set()
 
         for media_id in media_ids:
-            row = dig.db.get_media(media_id)
+            row = session.db.get_media(media_id)
             if not row:
                 skipped += 1
-                dig.log(f"Media ID {media_id} not found.", "warning")
+                session.log(f"Media ID {media_id} not found.", "warning")
                 continue
 
-            filepath = dig.batch_path / row["filepath"]
+            filepath = session.batch_path / row.filepath
             if not filepath.exists():
                 failed += 1
-                dig.log(f"Cannot rotate {row['filename']}: file not found.", "error")
+                session.log(f"Cannot rotate {row.filename}: file not found.", "error")
                 continue
 
-            dig.log(f"Rotating {row['filename']} ({direction})…", "info")
+            session.log(f"Rotating {row.filename} ({direction})…", "info")
             success, message = rotate_file(
-                filepath, direction, row.get("repair_issues"),
-                catalog_path=dig.catalog_path,
+                filepath, direction, row.repair_issues,
+                catalog_path=session.catalog_path,
             )
             if success:
                 rotated += 1
-                affected_folders.add(row["item_set_id"])
-                dig.log(f"  {message}", "success")
+                affected_folders.add(row.item_set_id)
+                session.log(f"  {message}", "success")
             else:
                 failed += 1
-                dig.log(f"  {message}", "error")
+                session.log(f"  {message}", "error")
 
-        dig.log(
+        session.log(
             f"Rotate complete: {rotated} rotated, {failed} failed, {skipped} skipped.",
             "info",
         )
-        dig._collect_and_store_counts()
+        session.collect_and_store_counts()
 
         for item_set_id in affected_folders:
-            dig.validate_folder(item_set_id)
+            self._scan.rescan_folder(item_set_id)

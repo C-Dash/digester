@@ -1,14 +1,21 @@
-"""Tests for the domain model dataclasses and their mapping-compatibility,
-and that repositories return entities (not plain dicts) for single-table reads.
+"""Tests for the domain model dataclasses, and that repositories return
+entities (not plain dicts) for entity reads.
+
+Entities are plain frozen dataclasses: attribute access only. They used to
+carry a mapping shim (``row["field"]``, ``.get()``, ``keys()``/``items()``,
+``dict(row)``) so callers could migrate incrementally; every caller now uses
+attribute access and the shim is gone.
 """
+
+import dataclasses
 
 import pytest
 
-from cdash_digester.models import Batch, Folder, Media
+from cdash_digester.models import Batch, Folder, Media, MediaWithDoc
 from cdash_digester.cdash_objects import BatchDB
 
 
-# ----------------------------------------------------------------- Row mixin
+# ------------------------------------------------------------------ entities
 
 def test_from_row_ignores_extra_columns():
     m = Media.from_row({"media_id": 1, "filename": "a.tif", "bogus": "x"})
@@ -34,30 +41,42 @@ def test_media_has_no_date_source():
     assert Media.from_row({"media_id": 1, "date_source": "exif"}).media_id == 1
 
 
-def test_dual_access_attribute_and_mapping():
+def test_entities_are_attribute_accessed():
     m = Media.from_row({"media_id": 7, "filename": "a.tif", "ready": True})
-    assert m.filename == "a.tif"       # attribute
-    assert m["filename"] == "a.tif"    # legacy item access
-    assert m.get("missing") is None    # legacy .get with default
-    assert m.get("missing", "d") == "d"
-    assert "ready" in m                # __contains__ over field names
-    assert m["media_id"] == 7
+    assert m.filename == "a.tif"
+    assert m.media_id == 7
+    assert m.ready is True
+    # Unset fields fall back to their declared defaults, not KeyError.
+    assert m.format is None
 
 
-def test_mapping_unpacking_and_dict():
-    f = Folder.from_row({"item_set_id": 5, "cdash_folder_name": "X",
-                         "name_ready": True})
-    as_dict = dict(f)
-    assert as_dict["item_set_id"] == 5
-    assert as_dict["cdash_folder_name"] == "X"
-    # ** unpacking works because keys()/__getitem__ are provided
-    assert {**f}["name_ready"] is True
+def test_entities_are_frozen():
+    """Rows are read models; mutating one would not reach the database."""
+    f = Folder.from_row({"item_set_id": 5, "cdash_folder_name": "X"})
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        f.cdash_folder_name = "Y"
 
 
-def test_missing_key_raises_keyerror():
+def test_unknown_attribute_raises():
     b = Batch.from_row({"batch_id": "CDB1"})
-    with pytest.raises(KeyError):
-        _ = b["does_not_exist"]
+    with pytest.raises(AttributeError):
+        _ = b.does_not_exist
+
+
+def test_mapping_shim_is_gone():
+    """The dict-compatibility layer was a migration aid and has been removed.
+
+    Keeping it would let dict-style access silently persist, which is what
+    coupled every caller — including the whole GUI — to column-name strings
+    rather than to the type.
+    """
+    m = Media.from_row({"media_id": 1})
+    for attr in ("get", "keys", "values", "items"):
+        assert not hasattr(m, attr), f"Row.{attr} should be gone"
+    with pytest.raises(TypeError):
+        _ = m["media_id"]
+    with pytest.raises(TypeError):
+        dict(m)
 
 
 # -------------------------------------------------- repositories return entities
@@ -80,7 +99,14 @@ def test_repo_reads_return_dataclasses(db):
     assert isinstance(db.get_folder_by_item_set(101), Folder)
     assert all(isinstance(f, Folder) for f in db.get_folders())
     assert isinstance(db.get_media(mid), Media)
-    # Joined read stays a plain dict (carries doc_type_code from the join).
+
+    # The joined read returns a typed entity too, so both accessors for the
+    # same rows are substitutable. It used to return a plain dict, so
+    # get_media() and get_media_for_folder() disagreed on shape.
     rows = db.get_media_for_folder(101)
-    assert isinstance(rows[0], dict)
-    assert "doc_type_code" in rows[0]
+    assert isinstance(rows[0], MediaWithDoc)
+    assert isinstance(rows[0], Media)          # and still a Media
+    assert rows[0].filename == "a.tif"
+    # plus the joined columns Media alone does not carry
+    assert hasattr(rows[0], "doc_type_code")
+    assert hasattr(rows[0], "num_pages")

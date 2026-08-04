@@ -6,7 +6,7 @@ added on top of this same qtbot setup.
 """
 
 from cdash_digester import __build_date__, __version__
-from cdash_digester.models import Folder
+from cdash_digester.models import Folder, MediaWithDoc
 from cdash_digester.gui.folder_info_pane import FolderInfoPane
 from cdash_digester.gui.folder_pane import FolderPane
 from cdash_digester.gui.media_table import MediaTablePane
@@ -41,15 +41,17 @@ def test_assign_dialog_count_is_singular_for_one(qtbot):
 
 
 def _media_row(media_id, filename, ready=True):
-    return {"media_id": media_id, "filename": filename, "doc_type_code": "VE",
-            "page_num": 1, "format": "RGB", "format_issues": "",
-            "repair_issues": "", "ready": ready, "filename_issues": ""}
+    return MediaWithDoc.from_row(
+        {"media_id": media_id, "filename": filename, "doc_type_code": "VE",
+         "page_num": 1, "format": "RGB", "format_issues": "",
+         "repair_issues": "", "ready": ready, "filename_issues": ""})
 
 
 def _thumb_row(media_id, filename, ready=True):
-    return {"media_id": media_id, "filename": filename, "ready": ready,
-            "page_num": 1, "num_pages": 1,
-            "filepath": f"media/{filename}"}   # file absent -> blank thumbnail
+    return MediaWithDoc.from_row(
+        {"media_id": media_id, "filename": filename, "ready": ready,
+         "page_num": 1, "num_pages": 1,
+         "filepath": f"media/{filename}"})   # file absent -> blank thumbnail
 
 
 def _load_thumbs(pane, tmp_path, n):
@@ -218,7 +220,7 @@ def test_folder_pane_emits_selection(qtbot):
     item = pane.topLevelItem(0)
     with qtbot.waitSignal(pane.folder_selected, timeout=1000) as blocker:
         pane._on_clicked(item, 0)
-    assert blocker.args[0]["item_set_id"] == 101
+    assert blocker.args[0].item_set_id == 101
 
 
 def test_folder_pane_emits_for_unparseable_folder(qtbot):
@@ -233,8 +235,8 @@ def test_folder_pane_emits_for_unparseable_folder(qtbot):
     with qtbot.waitSignal(pane.folder_selected, timeout=1000) as blocker:
         pane._on_clicked(item, 0)
     row = blocker.args[0]
-    assert row["item_set_id"] is None
-    assert row["notes"] == "Folder name not in CDASH format"
+    assert row.item_set_id is None
+    assert row.notes == "Folder name not in CDASH format"
 
 
 def test_folder_info_pane_shows_unparseable_folder(qtbot):
@@ -261,6 +263,6 @@ def test_folder_pane_select_folder_by_key(qtbot):
     pane.load_folders([normal, bad])
 
     pane.select_folder(folder_key(normal))
-    assert pane.current_row()["item_set_id"] == 101
+    assert pane.current_row().item_set_id == 101
     pane.select_folder(folder_key(bad))
-    assert pane.current_row()["os_folder_name"] == "Nonsense"
+    assert pane.current_row().os_folder_name == "Nonsense"

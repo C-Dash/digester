@@ -13,8 +13,8 @@ from ..repair_media import parse_repair_issues
 
 
 class ScreeningService:
-    def __init__(self, dig):
-        self._dig = dig
+    def __init__(self, session):
+        self._session = session
 
     def screen(self, filepath: Path) -> Tuple[bool, dict]:
         """Return (accepted, props) for filepath, using cdash_file_cache when
@@ -24,8 +24,8 @@ class ScreeningService:
         miss (new file, changed size/mtime, or a failed stat) the prescreener is
         invoked and the result cached.
         """
-        dig = self._dig
-        rel_path = str(filepath.relative_to(dig.batch_path))
+        session = self._session
+        rel_path = str(filepath.relative_to(session.batch_path))
         try:
             st = filepath.stat()
             size_bytes, mtime_ns = st.st_size, st.st_mtime_ns
@@ -33,7 +33,7 @@ class ScreeningService:
             # Let the prescreener surface the error; do not cache a bad stat.
             return screen_file(filepath)
 
-        cached = dig.db.get_file_cache(rel_path)
+        cached = session.db.get_file_cache(rel_path)
         if (cached and cached["file_size_bytes"] == size_bytes
                 and cached["mtime_ns"] == mtime_ns):
             props = {
@@ -51,5 +51,5 @@ class ScreeningService:
             return cached["accepted"], props
 
         accepted, props = screen_file(filepath)
-        dig.db.upsert_file_cache(rel_path, size_bytes, mtime_ns, accepted, props)
+        session.db.upsert_file_cache(rel_path, size_bytes, mtime_ns, accepted, props)
         return accepted, props

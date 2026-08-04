@@ -16,18 +16,19 @@ from ..repair_media import (
 
 
 class RejectService:
-    def __init__(self, dig):
-        self._dig = dig
+    def __init__(self, session, scan):
+        self._session = session
+        self._scan = scan
 
     def rejectable_media_ids(self, media_ids: List[int]) -> List[int]:
         """Return the subset of media_ids flagged Reject."""
-        db = self._dig.db
+        db = self._session.db
         if not db:
             return []
         out = []
         for media_id in media_ids:
             row = db.get_media(media_id)
-            if row and "reject" in parse_repair_issues(row.get("repair_issues")):
+            if row and "reject" in parse_repair_issues(row.repair_issues):
                 out.append(media_id)
         return out
 
@@ -39,9 +40,9 @@ class RejectService:
         the moved file's row — or, if any folder was removed outright, a
         full batch scan runs instead so the folder pane no longer lists it.
         """
-        dig = self._dig
-        if not dig.db:
-            dig.log("No open batch.", "error")
+        session = self._session
+        if not session.db:
+            session.log("No open batch.", "error")
             return
 
         rejected = 0
@@ -51,35 +52,35 @@ class RejectService:
         source_dirs: dict = {}   # item_set_id -> Path
 
         for media_id in media_ids:
-            row = dig.db.get_media(media_id)
+            row = session.db.get_media(media_id)
             if not row:
                 skipped += 1
-                dig.log(f"Media ID {media_id} not found.", "warning")
+                session.log(f"Media ID {media_id} not found.", "warning")
                 continue
 
-            issues = parse_repair_issues(row.get("repair_issues"))
+            issues = parse_repair_issues(row.repair_issues)
             if "reject" not in issues:
                 skipped += 1
-                dig.log(f"Skipping {row['filename']}: not flagged Reject.", "info")
+                session.log(f"Skipping {row.filename}: not flagged Reject.", "info")
                 continue
 
-            filepath = dig.batch_path / row["filepath"]
+            filepath = session.batch_path / row.filepath
             if not filepath.exists():
                 failed += 1
-                dig.log(f"Cannot reject {row['filename']}: file not found.", "error")
+                session.log(f"Cannot reject {row.filename}: file not found.", "error")
                 continue
 
-            folder_row = dig.db.get_folder_by_item_set(row["item_set_id"])
-            folder_name = (folder_row["os_folder_name"] if folder_row
+            folder_row = session.db.get_folder_by_item_set(row.item_set_id)
+            folder_name = (folder_row.os_folder_name if folder_row
                            else filepath.parent.name)
-            dest_dir = dig.rejects_path / folder_name
+            dest_dir = session.rejects_path / folder_name
             dest_dir.mkdir(parents=True, exist_ok=True)
 
             try:
                 shutil.move(str(filepath), str(dest_dir / filepath.name))
             except OSError as exc:
                 failed += 1
-                dig.log(f"Cannot move {row['filename']}: {exc}", "error")
+                session.log(f"Cannot move {row.filename}: {exc}", "error")
                 continue
 
             # Log the parsed repair issues, matching what repair_file() writes
@@ -87,21 +88,21 @@ class RejectService:
             # format string, so reject rows read e.g. "RGB 24-bit" in a column
             # of repair codes.)
             _append_repair_reject_csv(
-                dig.catalog_path, filepath,
+                session.catalog_path, filepath,
                 issues, REPAIR_REJECT_ACTION_REJECTED,
             )
 
             rejected += 1
-            affected_folders.add(row["item_set_id"])
-            source_dirs[row["item_set_id"]] = filepath.parent
-            dig.log(f"  Rejected {row['filename']} -> rejects/{folder_name}/",
+            affected_folders.add(row.item_set_id)
+            source_dirs[row.item_set_id] = filepath.parent
+            session.log(f"  Rejected {row.filename} -> rejects/{folder_name}/",
                      "success")
 
-        dig.log(
+        session.log(
             f"Reject complete: {rejected} moved, {failed} failed, {skipped} skipped.",
             "info",
         )
-        dig._collect_and_store_counts()
+        session.collect_and_store_counts()
 
         # Remove any now-empty source folders BEFORE rescanning, so a folder
         # that disappears is caught by the rescan rather than left as a
@@ -112,24 +113,24 @@ class RejectService:
                 try:
                     folder_dir.rmdir()
                     removed_item_set_ids.add(item_set_id)
-                    dig.log(
+                    session.log(
                         f"ALERT: media folder '{folder_dir.name}' is now "
                         f"empty and was removed.",
                         "warning",
                     )
                 except OSError as exc:
-                    dig.log(
+                    session.log(
                         f"Could not remove empty folder {folder_dir.name}: {exc}",
                         "error",
                     )
 
         if removed_item_set_ids:
-            # A folder vanished — validate_folder()/rescan_folder() only
+            # A folder vanished — rescan_folder() only
             # updates media/doc rows for a folder still on disk, it doesn't
             # prune the cdash_folder row itself. A full batch scan rebuilds
             # cdash_folder from what's actually on disk, so it also covers
             # every other affected folder in one pass.
-            dig.scan_batch()
+            self._scan.scan_batch()
         else:
             for item_set_id in affected_folders:
-                dig.validate_folder(item_set_id)
+                self._scan.rescan_folder(item_set_id)

@@ -9,8 +9,8 @@ import sqlite3
 from datetime import datetime
 from typing import Optional
 
-from ..cdash_objects import DOC_TYPES, PLACE_PROP_KEYS
-from ..models import Batch, Folder, Place, Doc, Media
+from ..constants import DOC_TYPES, PLACE_PROP_KEYS
+from ..models import Batch, Folder, Place, Doc, Media, MediaWithDoc
 from ..models import join_format_issues, join_repair_issues
 
 
@@ -298,13 +298,19 @@ class MediaRepo(_Repo):
         self._con.commit()
         return cur.lastrowid
 
+    def delete_folder_records(self, item_set_id: int):
+        """Remove all media and doc rows for one folder, before re-scanning it."""
+        self._con.execute("DELETE FROM cdash_media WHERE item_set_id=?", (item_set_id,))
+        self._con.execute("DELETE FROM cdash_doc   WHERE item_set_id=?", (item_set_id,))
+        self._con.commit()
+
     def get_media(self, media_id: int) -> Optional[Media]:
         return Media.from_row(self._con.execute(
             "SELECT * FROM cdash_media WHERE media_id=?", (media_id,)
         ).fetchone())
 
     def get_media_for_folder(self, item_set_id: int) -> list:
-        return self._con.execute(
+        rows = self._con.execute(
             """SELECT m.*, d.doc_type_code, d.num_pages
                FROM cdash_media m
                LEFT JOIN cdash_doc d ON m.doc_item_id = d.doc_item_id
@@ -312,6 +318,7 @@ class MediaRepo(_Repo):
                ORDER BY m.filename""",
             (item_set_id,),
         ).fetchall()
+        return [MediaWithDoc.from_row(r) for r in rows]
 
     def set_media_status(self, media_id: int, ready: bool, filename_issues: str = ""):
         self._con.execute(
@@ -450,3 +457,54 @@ class CacheRepo(_Repo):
             (new_path, old_path),
         )
         self._con.commit()
+
+
+# -------------------------------------------------------------------- export
+
+class ExportRepo(_Repo):
+    """Read-only, export-shaped queries.
+
+    These join across aggregates, so they belong to no single entity repo —
+    but they are still SQL, and SQL lives in this layer. CatalogExportService
+    used to run them directly through BatchDB._con, which meant the repository
+    boundary had a hole in it exactly where the schema knowledge was densest.
+    Rows come back as plain dicts (the bool-aware row factory), because the
+    CSV writers want the join columns, not a single-table entity.
+    """
+
+    def folders_for_export(self) -> list:
+        return self._con.execute(
+            "SELECT * FROM cdash_folder ORDER BY folder_number"
+        ).fetchall()
+
+    def places_for_export(self) -> list:
+        return self._con.execute(
+            """SELECT p.*,
+                      f.cdash_folder_name,
+                      f.item_set_id AS folder_item_set_id
+               FROM cdash_place p
+               LEFT JOIN cdash_doc d ON d.place_item_id = p.place_item_id
+               LEFT JOIN cdash_folder f ON f.item_set_id = d.item_set_id
+               GROUP BY p.place_item_id"""
+        ).fetchall()
+
+    def docs_for_export(self) -> list:
+        return self._con.execute(
+            """SELECT d.*,
+                      p.place_name, p.street_sort, p.neighborhood,
+                      p.chc_dist, p.lat AS place_lat, p.lon AS place_lon,
+                      f.cdash_folder_name,
+                      f.item_set_id AS folder_item_set_id
+               FROM cdash_doc d
+               LEFT JOIN cdash_place  p ON d.place_item_id = p.place_item_id
+               LEFT JOIN cdash_folder f ON d.item_set_id   = f.item_set_id
+               ORDER BY f.folder_number, d.folder_doc_sequence"""
+        ).fetchall()
+
+    def media_for_export(self) -> list:
+        return self._con.execute(
+            """SELECT m.*, d.doc_type_code, d.batch_doc_id, d.num_pages AS doc_pages
+               FROM cdash_media m
+               LEFT JOIN cdash_doc d ON m.doc_item_id = d.doc_item_id
+               ORDER BY m.item_set_id, m.filename"""
+        ).fetchall()

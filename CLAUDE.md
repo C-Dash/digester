@@ -44,9 +44,6 @@ touches the DB or a service directly — every call goes through `Digester`.
 
 - **Batch folder**: `CDB<YYMMDD>[a-z]?-<name>` (e.g. `CDB260320-Test_batch`)
 - **Media folder**: `[F<index>-]<slug>-OF<item_set_id>` (e.g. `F6-Mass_Ave-OF43111`)
-- **Media file stem**: `<place_slug>_<doc_index>p<page_index>-<doc_type>[-OP<place_id>]`
-  - e.g. `Mass_Ave_0027p0001-VE-OP43296`
-- **Doc types**: 2-letter codes — VE (Exterior View), VI (Interior View), RF (Research Form), AI (Architectural Inventory), VP (Plan View), and others — defined in `cdash_objects.DOC_TYPES`
 
 ## Batch Folder Structure
 

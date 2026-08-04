@@ -151,7 +151,7 @@ trailing letter on the batch ID disambiguates same-day batches
 |---|---|---|
 | Batch folder | `CDB<YYMMDD>[a-z]?-<name>` | `CDB260430-Test_batch` |
 | Media folder | `F<index>-<slug>-OF<item_set_id>` | `F3-168_Brattle_St-OF160936` |
-| Media file stem | `<place_slug>_<doc_index:04d>p<page:04d>-<doc_type>-OP<place_id>` | `12_Reservoir_St_0017p0001-VE-OP196223` |
+| Media file stem | `<place_slug>-<doc_index:04d>p<page:04d>-<doc_type>-OP<place_id>` | `12_Reservoir_St_0017p0001-VE-OP196223` |
 
 A folder without the `F<index>` prefix is accepted on input (the scanner assigns
 the index). A rudimentary file name (e.g. `photo001.tif`) is accepted and

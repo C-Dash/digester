@@ -8,9 +8,10 @@ factory. The repository classes hold the SQL for each aggregate. `BatchDB`
 from .database import Database
 from .repositories import (
     BatchRepo, FolderRepo, PlaceRepo, DocRepo, MediaRepo, CacheRepo,
+    ExportRepo,
 )
 
 __all__ = [
     "Database", "BatchRepo", "FolderRepo", "PlaceRepo",
-    "DocRepo", "MediaRepo", "CacheRepo",
+    "DocRepo", "MediaRepo", "CacheRepo", "ExportRepo",
 ]

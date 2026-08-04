@@ -11,6 +11,8 @@ without re-emitting the signal (avoids feedback loops).
 
 from typing import List
 
+from ..models import MediaWithDoc
+
 from PySide6.QtCore import (
     QAbstractTableModel, QItemSelection, QItemSelectionModel, QModelIndex,
     Qt, Signal,
@@ -29,14 +31,14 @@ _HEADERS  = ["Filename",  "Status",  "Repair Issues",   "Name Issues", "Type",  
 class _MediaModel(QAbstractTableModel):
     def __init__(self):
         super().__init__()
-        self._rows: List[dict] = []
+        self._rows: List[MediaWithDoc] = []
 
     def load(self, rows):
         # A wholesale data replacement is a reset, not a layout change: a reset
         # invalidates the selection model's stored indexes so a previous
         # folder's selection cannot carry over to the new rows.
         self.beginResetModel()
-        self._rows = [dict(r) for r in rows]
+        self._rows = list(rows)
         self.endResetModel()
 
     def rowCount(self, parent=QModelIndex()):
@@ -56,24 +58,25 @@ class _MediaModel(QAbstractTableModel):
         row = self._rows[index.row()]
         if role == Qt.DisplayRole:
             col = _COLUMNS[index.column()]
-            val = row[col]
+            # _COLUMNS names entity fields, so this is a dynamic attribute read.
+            val = getattr(row, col)
             if col == "ready":
                 return status_text(val)
             return "" if val is None else str(val)
         if role == Qt.ForegroundRole and _COLUMNS[index.column()] == "ready":
-            return QBrush(QColor(status_color(row["ready"])))
+            return QBrush(QColor(status_color(row.ready)))
         if role == Qt.UserRole:
-            return row["media_id"]
+            return row.media_id
         return None
 
     def media_id_at(self, row: int) -> int:
         if 0 <= row < len(self._rows):
-            return self._rows[row]["media_id"]
+            return self._rows[row].media_id
         return -1
 
     def row_for_media_id(self, media_id: int) -> int:
         for i, r in enumerate(self._rows):
-            if r["media_id"] == media_id:
+            if r.media_id == media_id:
                 return i
         return -1
 

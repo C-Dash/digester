@@ -4,7 +4,8 @@ splits BatchDB into a Database + repositories."""
 
 import pytest
 
-from cdash_digester.cdash_objects import BatchDB, PLACE_PROP_KEYS
+from cdash_digester.cdash_objects import BatchDB
+from cdash_digester.constants import PLACE_PROP_KEYS
 from conftest import place_props
 
 
@@ -23,8 +24,8 @@ def test_batch_upsert_is_singleton(db):
     db.upsert_batch("CDB1", "n1", "/p", "2026-01-01")
     db.upsert_batch("CDB1", "n2", "/p", "2026-01-01")
     batch = db.get_batch()
-    assert batch["batch_id"] == "CDB1"
-    assert batch["name"] == "n2"
+    assert batch.batch_id == "CDB1"
+    assert batch.name == "n2"
 
 
 def test_folder_upsert_and_index(db):
@@ -32,9 +33,9 @@ def test_folder_upsert_and_index(db):
                      os_folder_name="F1-Main-OF101", name_ready=True)
     db.assign_folder_index(101, 1)
     row = db.get_folder_by_item_set(101)
-    assert row["cdash_folder_name"] == "Main"
-    assert row["name_ready"] is True          # bool row factory
-    assert row["folder_number"] == 1
+    assert row.cdash_folder_name == "Main"
+    assert row.name_ready is True          # bool row factory
+    assert row.folder_number == 1
 
 
 # ----------------------------------------------------------------- bool cols
@@ -45,9 +46,9 @@ def test_media_ready_roundtrips_as_bool(db):
                      os_folder_name="F1-Main-OF101")
     mid = db.insert_media(doc_item_id=None, item_set_id=101,
                           filename="a.tif", filepath="media/a.tif", ready=True)
-    assert db.get_media(mid)["ready"] is True
+    assert db.get_media(mid).ready is True
     db.set_media_status(mid, False, "note")
-    assert db.get_media(mid)["ready"] is False
+    assert db.get_media(mid).ready is False
 
 
 # ------------------------------------------------------- clear_working_tables

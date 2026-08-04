@@ -1,13 +1,20 @@
 """Domain model dataclasses for the CDASH batch entities.
 
-Each dataclass mirrors one working table. They are returned by the repositories
-for single-table reads (joined/aggregate reads stay plain dicts).
+Each dataclass mirrors one working table. Repositories return them for every
+*entity* read — including the media-joined-to-doc read, which has its own type
+(MediaWithDoc) so that get_media() and get_media_for_folder() are substitutable.
+Aggregate/COUNT reads, cache-table reads and the export joins stay plain dicts:
+they are projections, not entities.
 
-To avoid a big-bang rewrite, every entity is mapping-compatible via the `Row`
-mixin: in addition to attribute access (``media.filename``) the legacy dict-style
-access used throughout the codebase keeps working unchanged —
-``media["filename"]``, ``media.get("filename")``, ``"x" in media``,
-``dict(media)``, and ``**media``.
+Entities are frozen dataclasses read by attribute (``media.filename``). They
+briefly carried a mapping shim (``media["filename"]``, ``.get()``, ``keys()``,
+``dict(media)``) so callers could migrate off dict rows incrementally. Every
+caller — services, digester and the whole GUI — now uses attribute access, so
+the shim is gone and `Row` is only a construction helper.
+
+Callers are therefore coupled to the *type* rather than to column-name strings:
+a renamed column is a load-time error in one place instead of a KeyError at
+paint time.
 """
 
 import dataclasses
@@ -39,28 +46,7 @@ def join_repair_issues(issues: Optional[Iterable[str]]) -> str:
 
 
 class Row:
-    """Mapping-compatible mixin for dataclass DB rows."""
-
-    def __getitem__(self, key):
-        try:
-            return getattr(self, key)
-        except AttributeError:
-            raise KeyError(key)
-
-    def get(self, key, default=None):
-        return getattr(self, key, default)
-
-    def __contains__(self, key) -> bool:
-        return key in self._field_names()
-
-    def keys(self):
-        return self._field_names()
-
-    def values(self):
-        return [getattr(self, k) for k in self._field_names()]
-
-    def items(self):
-        return [(k, getattr(self, k)) for k in self._field_names()]
+    """Construction helper for dataclass DB rows."""
 
     @classmethod
     def _field_names(cls) -> tuple:
@@ -70,9 +56,9 @@ class Row:
     def from_row(cls, row: Optional[dict]):
         """Build an instance from a sqlite row dict, or return None.
 
-        Only the dataclass's own fields are taken, so a plain SELECT * dict maps
-        cleanly; extra columns (from joins) are ignored by callers that still use
-        dicts for those queries.
+        Only the dataclass's own fields are taken, so a plain SELECT * dict
+        maps cleanly and any extra columns a join brings along are ignored —
+        pick the matching type (e.g. MediaWithDoc) when those columns matter.
         """
         if row is None:
             return None
@@ -159,3 +145,16 @@ class Media(Row):
     repair_issues: Optional[str] = None
     ready: bool = False
     filename_issues: Optional[str] = None
+
+
+@dataclasses.dataclass(frozen=True)
+class MediaWithDoc(Media):
+    """A media row joined to its document.
+
+    get_media() and get_media_for_folder() read the same entity, but the
+    latter joins cdash_doc for the two columns the media table and thumbnail
+    pane need. Without a type for that shape the two accessors returned
+    incompatible things — a Media and a plain dict — for the same rows.
+    """
+    doc_type_code: Optional[str] = None
+    num_pages: Optional[int] = None

@@ -1,127 +1,24 @@
 """
 CDASH Objects Module  (cdash_objects.py)
 
-Defines the domain constants, name parsers, and the BatchDB persistence facade.
+Defines BatchDB, the per-batch persistence facade over the db package.
 
-Layout
-------
-  DOC_TYPES        — fixed document-type code → description mapping
-  slugify()        — filesystem-safe name normaliser
-  parse_batch_name()   \
-  parse_folder_name()   > name parsers used by the digester
-  parse_media_name()   /
-  BatchDB          — thin facade over db.Database + the repository classes;
-                     preserves the historical single-object CRUD API.
+Domain constants live in constants.py and the name parsers in naming.py —
+both leaf modules — so db/repositories.py can import them without importing
+this module. They are re-exported here for backwards compatibility with
+existing callers.
 """
 
-import re
 from pathlib import Path
-from typing import Optional
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-DOC_TYPES: dict[str, str] = {
-    "VE": "Exterior View",
-    "VI": "Interior View",
-    "RF": "Research Form",
-    "AI": "Architectural Inventory Form",
-    "VP": "Plan View",
-    "CD": "Correspondence",
-    "RN": "Research Notes",
-    "HS": "Historic American Buildings Survey",
-    "CS": "Contact Sheet",
-    "AM": "Published Material",
-    "SM": "Supplemental Material",
-    "VD": "Detail View",
-    "EP": "Ephemera",
-    "DM": "Demolition Memo",
-    "UC": "Uncategorized",
-}
-
-# NB: the accepted-suffix set lives in prescreener._ACCEPTED_SUFFIXES, which
-# owns format admissibility. An unused duplicate used to sit here — don't
-# reintroduce one.
-
-# Place property keys shared by the validator output, the cdash_place working
-# table, and the cdash_place_cache table.
-PLACE_PROP_KEYS = (
-    "place_name", "place_type", "house_num", "street_name", "street_sort",
-    "neighborhood", "chc_dist", "item_set_ids", "lat", "lon",
+from .constants import DOC_TYPES, PLACE_PROP_KEYS          # noqa: F401  (re-export)
+from .naming import (                                       # noqa: F401  (re-export)
+    slugify, parse_batch_name, parse_folder_name, parse_media_name,
 )
-
-# ---------------------------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------------------------
-
-def slugify(text: str) -> str:
-    """Replace spaces with underscores; drop all non-alphanumeric except - and _."""
-    return re.sub(r"[^a-zA-Z0-9_\-]", "", text.replace(" - ", "-").replace(" ", "_"))
-
-
-# ---------------------------------------------------------------------------
-# Name parsers
-# ---------------------------------------------------------------------------
-
-# Batch folder:  CDB<YYMMDD>[a-z]?-<name>
-_BATCH_RE = re.compile(r"^CDB(?P<date>\d{6})(?P<letter>[a-z])?-(?P<name>.+)$")
-
-# Media folder:  [F<index>-]<slug>-OF<item_set_id>
-_FOLDER_RE = re.compile(
-    r"^(?:F(?P<folder_index>\d+)-)?(?P<slug>.+)-OF(?P<item_set_id>\d+)$"
+from .db import (
+    Database, BatchRepo, FolderRepo, PlaceRepo, DocRepo, MediaRepo, CacheRepo,
+    ExportRepo,
 )
-
-# Ready media stem:
-#   <place_slug>_<doc_index>p<page_index>-<doc_type>[-OP<place_id>]
-_MEDIA_RE = re.compile(
-    r"^(?P<place_slug>.+)[-_](?P<doc_index>\d+)p(?P<page_index>\d+)"
-    r"-(?P<doc_type>[A-Z]{2})(?:-OP(?P<place_id>\d+))?$",
-    re.IGNORECASE,
-)
-
-
-def parse_batch_name(folder_name: str) -> Optional[dict]:
-    """Parse a batch folder name.  Returns a dict or None on mismatch."""
-    m = _BATCH_RE.match(folder_name)
-    if not m:
-        return None
-    return {
-        "batch_id": f"CDB{m.group('date')}{m.group('letter') or ''}",
-        "date":     m.group("date"),
-        "letter":   m.group("letter"),
-        "name":     m.group("name"),
-    }
-
-
-def parse_folder_name(folder_name: str) -> Optional[dict]:
-    """Parse a media folder name.  Returns a dict or None on mismatch."""
-    m = _FOLDER_RE.match(folder_name)
-    if not m:
-        return None
-    return {
-        "folder_index": int(m.group("folder_index")) if m.group("folder_index") else None,
-        "slug":         m.group("slug"),
-        "item_set_id":  int(m.group("item_set_id")),
-    }
-
-
-def parse_media_name(stem: str) -> Optional[dict]:
-    """Parse a media filename stem (no extension).
-
-    Returns a dict with place_slug, doc_index, page_index, doc_type,
-    place_id (int or None), or None if the name is not in ready format.
-    """
-    m = _MEDIA_RE.match(stem)
-    if not m:
-        return None
-    return {
-        "place_slug": m.group("place_slug"),
-        "doc_index":  int(m.group("doc_index")),
-        "page_index": int(m.group("page_index")),
-        "doc_type":   m.group("doc_type").upper(),
-        "place_id":   int(m.group("place_id")) if m.group("place_id") else None,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -134,29 +31,44 @@ class BatchDB:
     Historically this class held every SQL statement directly. It is now a thin
     facade: it owns a `db.Database` (connection/schema/migrations) and one
     repository per aggregate, and delegates each method to the relevant repo.
-    The public API (method names, signatures, `_con`, `db_path`) is unchanged so
-    existing callers (digester, prescreener, GUI) need no changes.
+
+    `_con` is private and stays that way. Services used to reach through it to
+    run their own SQL (four export joins, two cascade deletes); that SQL now
+    lives in ExportRepo and MediaRepo. If a caller needs a query this facade
+    doesn't expose, add a repo method — don't reach for the connection.
 
     Boolean status columns (ready, name_ready, media_ready, accepted) are stored
     as INTEGER 0/1 and surfaced as Python bools via the row factory.
     """
 
     def __init__(self, db_path: Path):
-        # Local import avoids an import cycle (db.repositories imports this
-        # module's constants), since the db package is only needed at runtime.
-        from .db import (
-            Database, BatchRepo, FolderRepo, PlaceRepo,
-            DocRepo, MediaRepo, CacheRepo,
-        )
         self.db_path = db_path
         self._db = Database(db_path)
-        self._con = self._db.con           # kept public for direct-SQL callers
+        self._con = self._db.con
         self._batch = BatchRepo(self._con)
         self._folders = FolderRepo(self._con)
         self._places = PlaceRepo(self._con)
         self._docs = DocRepo(self._con)
         self._media = MediaRepo(self._con)
         self._caches = CacheRepo(self._con)
+        self._export = ExportRepo(self._con)
+
+    # ----------------------------------------------------------------- export
+
+    def folders_for_export(self):
+        return self._export.folders_for_export()
+
+    def places_for_export(self):
+        return self._export.places_for_export()
+
+    def docs_for_export(self):
+        return self._export.docs_for_export()
+
+    def media_for_export(self):
+        return self._export.media_for_export()
+
+    def delete_folder_records(self, item_set_id):
+        self._media.delete_folder_records(item_set_id)
 
     # ------------------------------------------------------------ schema/lifecycle
 

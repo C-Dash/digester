@@ -12,9 +12,14 @@ real work to focused services in cdash_digester.services:
   RepairService         — media repair
   CatalogExportService  — CSV export
 
-The services share state by holding a reference to this Digester; in particular
-they read `log` and `db` dynamically, so the GUI worker's runtime reassignment
-of `digester.log` reaches every service.
+Services do not see this facade. They share a `Session` (session.py) holding the
+batch paths, the open database, the log sink, the Omeka validator and the batch
+counts, and receive any sibling services they need as explicit constructor
+arguments. `log` and `db` are read live from the Session, so the GUI worker's
+runtime reassignment of `digester.log` still reaches every service.
+
+The Digester's own `batch_path`/`log`/`db`/paths are properties over the
+Session, so existing callers (GUI, tests, CLI) are unaffected.
 
 The GUI runs Digester methods on a QThread worker so the UI stays responsive.
 
@@ -25,16 +30,14 @@ Copies CDB260430-Test_batch to a temp folder, scans it, and prints the status
 summary.  The GUI is not launched.
 """
 
-import csv
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from .cdash_objects import BatchDB, parse_batch_name
-from .repair_media import (
-    REPAIR_REJECT_ACTION_REJECTED, REPAIR_REJECT_ACTION_REPAIRED_PREFIX,
-)
+from .cdash_objects import BatchDB
+from .naming import parse_batch_name
+from .session import Session
 from .validator import CDASHValidator
 from .services import (
     ScanService, ValidationService, ScreeningService,
@@ -48,38 +51,71 @@ class Digester:
 
     def __init__(self, batch_path: Path,
                  log: Callable[[str, str], None] = None):
-        self.batch_path = Path(batch_path)
-        self.log = log or (lambda msg, lvl: None)
-        self.db: Optional[BatchDB] = None
-        self._validator = CDASHValidator()
+        self._session = Session(batch_path, log, validator=CDASHValidator())
 
-        # Services share this Digester as their session context.
-        self._validation = ValidationService(self)
-        self._screening = ScreeningService(self)
-        self._scan = ScanService(self)
-        self._assignment = AssignmentService(self)
-        self._repair = RepairService(self)
-        self._reject = RejectService(self)
-        self._rotate = RotateService(self)
-        self._export = CatalogExportService(self)
+        # Services share the Session, not this facade, and receive their
+        # sibling services explicitly — so each one's dependencies are
+        # visible here rather than discovered via dig._private attributes.
+        self._validation = ValidationService(self._session)
+        self._screening = ScreeningService(self._session)
+        self._scan = ScanService(self._session, self._validation,
+                                 self._screening)
+        self._assignment = AssignmentService(self._session, self._validation)
+        self._repair = RepairService(self._session, self._scan)
+        self._reject = RejectService(self._session, self._scan)
+        self._rotate = RotateService(self._session, self._scan)
+        self._export = CatalogExportService(self._session)
+
+    # ------------------------------------------------- session passthroughs
+    # The GUI and tests treat these as Digester state; the Session owns them.
+
+    @property
+    def batch_path(self) -> Path:
+        return self._session.batch_path
+
+    @property
+    def log(self):
+        return self._session.log
+
+    @log.setter
+    def log(self, fn):
+        # The GUI worker swaps this at runtime to redirect output to a signal;
+        # services read session.log live, so the swap reaches all of them.
+        self._session.log = fn or (lambda msg, lvl: None)
+
+    @property
+    def db(self) -> Optional[BatchDB]:
+        return self._session.db
+
+    @db.setter
+    def db(self, value):
+        self._session.db = value
+
+    @property
+    def _validator(self):
+        return self._session.validator
+
+    @_validator.setter
+    def _validator(self, value):
+        self._session.validator = value
 
     # ------------------------------------------------------------------ paths
 
     @property
     def catalog_path(self) -> Path:
-        return self.batch_path / "catalog"
+        return self._session.catalog_path
 
     @property
     def media_path(self) -> Path:
-        return self.batch_path / "media"
+        return self._session.media_path
 
     @property
     def rejects_path(self) -> Path:
-        return self.batch_path / "rejects"
+        return self._session.rejects_path
 
     @property
     def db_path(self) -> Path:
-        return self.catalog_path / "batch_db.sqlite"
+        return self._session.db_path
 
     # ------------------------------------------------------------------ init
 
@@ -152,8 +188,12 @@ class Digester:
         self.log(f"Purged {n} cached validation/screening entr"
                  f"{'y' if n == 1 else 'ies'}.", "info")
 
-    def validate_folder(self, item_set_id: int):
-        """Re-scan a single folder (Folder → Rescan Selected Folder)."""
+    def rescan_folder(self, item_set_id: int):
+        """Re-scan a single folder (Folder → Rescan Selected Folder).
+
+        Named for what it does: this does not validate anything. (Omeka
+        folder validation is CDASHValidator.validate_folder, a different
+        method on a different class.)"""
         self._scan.rescan_folder(item_set_id)
 
     def validate_place(self, place_id: int) -> Tuple[str, str]:
@@ -218,81 +258,42 @@ class Digester:
 
     # --------------------------------------------------------------- counts
 
-    def _read_repair_reject_csv_counts(self) -> tuple:
-        """Return (rejected_rows, repaired_rows) from catalog/repair_reject.csv.
-
-        repair_reject.csv is the shared log for repair attempts, repair
-        refusals, rotations, and reject moves, so neither count is simply the
-        row total — each is matched against the Repair_Action string its own
-        producer writes ("Rejected" from RejectService, "Repaired: …" from
-        repair_media). Rows for refusals and rotations count as neither.
-        """
-        csv_path = self.catalog_path / "repair_reject.csv"
-        try:
-            with open(csv_path, newline="", encoding="utf-8") as f:
-                rows = list(csv.DictReader(f))
-            rejected = sum(
-                1 for r in rows
-                if r.get("Repair_Action", "") == REPAIR_REJECT_ACTION_REJECTED
-            )
-            repaired = sum(
-                1 for r in rows
-                if r.get("Repair_Action", "").startswith(
-                    REPAIR_REJECT_ACTION_REPAIRED_PREFIX)
-            )
-            return rejected, repaired
-        except FileNotFoundError:
-            return 0, 0
-
     def _collect_and_store_counts(self) -> dict:
-        """Compute all six counts, persist to DB, and return as a dict."""
-        stats = self.db.count_batch_stats()
-        rejects, repaired = self._read_repair_reject_csv_counts()
-        stats["rejects"]  = rejects
-        stats["repaired"] = repaired
-        self.db.update_batch_counts(
-            folders=stats["folders"], places=stats["places"],
-            documents=stats["documents"], media=stats["media"],
-            rejects=rejects, repaired=repaired,
-        )
-        return stats
+        return self._session.collect_and_store_counts()
 
     @staticmethod
     def _counts_summary(counts: dict) -> str:
-        lines = [
-            "\nBatch Summary",
-            f"  Folders:   {counts['folders']}",
-            f"  Places:    {counts['places']}",
-            f"  Documents: {counts['documents']}",
-            f"  Media:     {counts['media']}",
-            f"  Rejects:   {counts['rejects']}",
-            f"  Repaired:  {counts['repaired']}",
-        ]
-        return "\n".join(lines)
+        return Session.counts_summary(counts)
 
     # ----------------------------------------------------------------- status
 
     def get_status_summary(self) -> str:
+        """Render the batch status report. Read-only.
+
+        This used to call _collect_and_store_counts(), so asking for a status
+        summary wrote to the database — a query with a side effect. It now
+        computes the counts without persisting them.
+        """
         if not self.db:
             return "No batch open."
         batch = self.db.get_batch()
         if not batch:
             return "No batch record in DB."
         folders = self.db.get_folders()
-        n_ready = sum(1 for f in folders if f["name_ready"] and f["media_ready"])
+        n_ready = sum(1 for f in folders if f.name_ready and f.media_ready)
         lines = [
-            f"Batch:   {batch['batch_id']}  ready={batch['ready']}",
+            f"Batch:   {batch.batch_id}  ready={batch.ready}",
             f"Folders: {n_ready}/{len(folders)} ready",
-            f"Rejected: {batch.get('rejected_count', 0)}",
+            f"Rejected: {batch.rejected_count}",
             "",
         ]
         for f in folders:
             lines.append(
-                f"  {f['os_folder_name']:<45s}"
-                f"  name={'ok' if f['name_ready'] else 'NO':2s}"
-                f"  media={'ok' if f['media_ready'] else 'NO'}"
+                f"  {f.os_folder_name:<45s}"
+                f"  name={'ok' if f.name_ready else 'NO':2s}"
+                f"  media={'ok' if f.media_ready else 'NO'}"
             )
-        counts = self._collect_and_store_counts()
+        counts = self._session.compute_counts()
         return "\n".join(lines) + "\n" + self._counts_summary(counts)
 
     # ------------------------------------------------------------------ misc

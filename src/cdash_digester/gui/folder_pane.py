@@ -24,8 +24,8 @@ def folder_key(folder):
     parseable folders); falls back to the on-disk name for folders whose name
     can't be parsed (item_set_id is NULL and they are never renamed).
     """
-    isid = folder["item_set_id"]
-    return ("id", isid) if isid is not None else ("name", folder["os_folder_name"])
+    isid = folder.item_set_id
+    return ("id", isid) if isid is not None else ("name", folder.os_folder_name)
 
 
 class FolderPane(QTreeWidget):
@@ -48,8 +48,8 @@ class FolderPane(QTreeWidget):
         self.clear()
         self._rows_by_item.clear()
         for folder in folders:
-            item = QTreeWidgetItem([folder["os_folder_name"]])
-            color = _folder_color(folder["name_ready"], folder["media_ready"])
+            item = QTreeWidgetItem([folder.os_folder_name])
+            color = _folder_color(folder.name_ready, folder.media_ready)
             item.setForeground(0, QBrush(color))
             self.addTopLevelItem(item)
             self._rows_by_item[id(item)] = folder

@@ -225,25 +225,25 @@ class ThumbnailPane(QScrollArea):
 
         for i, row in enumerate(rows):
             try:
-                filepath = batch_root / row["filepath"]
+                filepath = batch_root / row.filepath
                 pm = _make_thumbnail(filepath) if filepath.exists() else _blank()
                 if filepath.suffix.lower() == ".pdf":
                     # PDF badge = page count (always shown, even 1), red.
-                    page_label = str(row["num_pages"]) if row["num_pages"] else ""
+                    page_label = str(row.num_pages) if row.num_pages else ""
                     badge_color = "red"
                 else:
                     # Image badge = page number within a multi-page doc, yellow.
-                    page_label = (str(row["page_num"])
-                                  if row["num_pages"] and row["num_pages"] > 1
-                                  and row["page_num"] else "")
+                    page_label = (str(row.page_num)
+                                  if row.num_pages and row.num_pages > 1
+                                  and row.page_num else "")
                     badge_color = "yellow"
-                widget = _Thumb(row["media_id"], pm, row["ready"],
-                                row["filename"], page_label, badge_color)
+                widget = _Thumb(row.media_id, pm, row.ready,
+                                row.filename, page_label, badge_color)
                 widget.clicked.connect(self._on_thumb_clicked)
                 self._layout.addWidget(widget, i // col_count, i % col_count)
-                self._widgets[row["media_id"]] = widget
+                self._widgets[row.media_id] = widget
             except Exception as exc:
-                print(f"Thumbnail error for {row['filename']}: {exc}", flush=True)
+                print(f"Thumbnail error for {row.filename}: {exc}", flush=True)
 
         # Push widgets to top-left
         self._layout.setRowStretch(max(1, len(rows) // col_count), 1)
