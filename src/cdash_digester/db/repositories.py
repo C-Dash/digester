@@ -11,6 +11,7 @@ from typing import Optional
 
 from ..cdash_objects import DOC_TYPES, PLACE_PROP_KEYS
 from ..models import Batch, Folder, Place, Doc, Media
+from ..models import join_format_issues, join_repair_issues
 
 
 class _Repo:
@@ -431,8 +432,8 @@ class CacheRepo(_Repo):
              props.get("file_size_mb"), props.get("pixel_width"),
              props.get("pixel_height"), props.get("format"),
              props.get("capture_date"), props.get("date_source"),
-             "|".join(props.get("format_issues", [])),
-             ", ".join(props.get("repair_issues", [])),
+             join_format_issues(props.get("format_issues")),
+             join_repair_issues(props.get("repair_issues")),
              props.get("pdf_pages"),
              datetime.now().isoformat(timespec="seconds")),
         )

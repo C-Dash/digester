@@ -83,12 +83,10 @@ def _blank() -> QPixmap:
 
 
 def _make_thumbnail(filepath: Path) -> QPixmap:
-    try:
-        if filepath.suffix.lower() == ".pdf":
-            return _render_pdf_page(filepath)
-        return _render_image(filepath)
-    except Exception:
-        return _blank()
+    # No try here: both renderers already catch everything and return _blank().
+    if filepath.suffix.lower() == ".pdf":
+        return _render_pdf_page(filepath)
+    return _render_image(filepath)
 
 
 # ---------------------------------------------------------------------------

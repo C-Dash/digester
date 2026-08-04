@@ -11,7 +11,31 @@ access used throughout the codebase keeps working unchanged —
 """
 
 import dataclasses
-from typing import Optional
+from typing import Iterable, List, Optional
+
+# ---------------------------------------------------------------------------
+# Issue-list serialization
+# ---------------------------------------------------------------------------
+# cdash_media stores both issue lists as delimited strings. The delimiters and
+# the join/split pairs live here — a leaf module both db/ and services/ can
+# import — so no caller has to hand-roll the inverse of another's join.
+# repair_media.parse_repair_issues remains the canonical *parser* for repair
+# issues, since it also normalizes each code.
+
+FORMAT_ISSUE_SEP = "|"
+REPAIR_ISSUE_SEP = ", "
+
+
+def join_format_issues(issues: Optional[Iterable[str]]) -> str:
+    return FORMAT_ISSUE_SEP.join(issues or [])
+
+
+def split_format_issues(value: Optional[str]) -> List[str]:
+    return value.split(FORMAT_ISSUE_SEP) if value else []
+
+
+def join_repair_issues(issues: Optional[Iterable[str]]) -> str:
+    return REPAIR_ISSUE_SEP.join(issues or [])
 
 
 class Row:

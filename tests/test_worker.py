@@ -5,10 +5,12 @@ connection: while a worker runs, the folder pane and DB-touching menu actions
 are disabled, and they re-enable once the worker's ``done`` signal fires.
 """
 
+from pathlib import Path
+
 from cdash_digester.digester import Digester
 from cdash_digester.gui.folder_pane import folder_key
 from cdash_digester.gui.main_window import MainWindow
-from conftest import FakeValidator, make_tiff, place_props
+from conftest import FakeValidator, make_pdf, make_tiff, place_props
 
 
 # The DB-touching actions that _set_busy blanket-gates, alongside the folder
@@ -64,11 +66,11 @@ def test_csv_action_gated_on_batch_ready(qtbot, make_batch):
     win.digester.load_or_initialize()
 
     win.digester.db.set_batch_ready(False)
-    win._sync_csv_enabled()
+    win._sync_actions()
     assert win._act_csv.isEnabled() is False
 
     win.digester.db.set_batch_ready(True)
-    win._sync_csv_enabled()
+    win._sync_actions()
     assert win._act_csv.isEnabled() is True
 
     win.digester.close()
@@ -209,4 +211,49 @@ def test_rescan_batch_refreshes_media_table(qtbot, make_batch):
     qtbot.waitUntil(lambda: win.folder_pane.isEnabled(), timeout=10000)
 
     assert win.media_table.model().rowCount() == 2
+    win.digester.close()
+
+
+def test_rotate_actions_track_selection_rotatability(qtbot, make_batch):
+    """Rotate CW/CCW enable only when the selection holds a rotatable file.
+
+    Rotatability is resolved once per folder load and cached, so this also
+    covers that _sync_actions intersects against that cache correctly rather
+    than re-querying the DB per selection change.
+    """
+    root = make_batch("CDB260430-Test_batch")
+    folder = root / "media" / "F1-Main-OF101"
+    folder.mkdir(parents=True)
+    make_tiff(folder / "Main_0001p0001-VE-OP55.tif", "RGB",
+              compression="tiff_lzw")
+    make_pdf(folder / "Main_0002p0001-RF-OP55.pdf")
+
+    win = MainWindow()
+    qtbot.addWidget(win)
+    _open_batch_in_window(qtbot, root, win)
+
+    row = win.digester.get_folders()[0]
+    win.folder_pane.select_folder(folder_key(row))
+    win._on_folder_selected(row)
+
+    media = win.digester.get_media_for_folder(row["item_set_id"])
+    by_suffix = {Path(m["filename"]).suffix.lower(): m["media_id"] for m in media}
+    assert set(by_suffix) == {".tif", ".pdf"}
+
+    # TIFF selected -> rotatable
+    win.media_table.highlight_media_ids([by_suffix[".tif"]])
+    win._sync_actions()
+    assert win._act_rotate_cw.isEnabled() is True
+    assert win._act_rotate_ccw.isEnabled() is True
+
+    # PDF only -> not rotatable (rotation never applies to PDFs)
+    win.media_table.highlight_media_ids([by_suffix[".pdf"]])
+    win._sync_actions()
+    assert win._act_rotate_cw.isEnabled() is False
+    assert win._act_rotate_ccw.isEnabled() is False
+
+    # Nothing selected -> not rotatable
+    win.media_table.highlight_media_ids([])
+    win._sync_actions()
+    assert win._act_rotate_cw.isEnabled() is False
     win.digester.close()

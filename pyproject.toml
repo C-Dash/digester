@@ -22,7 +22,7 @@ dev = [
 ]
 
 [project.scripts]
-cdash-digester = "cdash_digester.gui.main_window:main"
+cdash-digester = "cdash_digester.gui.app:main"
 
 [tool.setuptools.package-data]
 cdash_digester = ["csv_mappings/**/*"]

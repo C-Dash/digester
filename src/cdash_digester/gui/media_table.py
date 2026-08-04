@@ -20,12 +20,10 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QMenu, QTableView, QWidget,
 )
 
-from .status_colors import status_color
+from .status_colors import status_color, status_text
 
 _COLUMNS  = ["filename", "ready", "repair_issues",  "filename_issues", "doc_type_code", "page_num", "format", "format_issues" ]
 _HEADERS  = ["Filename",  "Status",  "Repair Issues",   "Name Issues", "Type",          "Page",    "Format", "Format Notes"]
-
-_READY_DISPLAY = {True: "Ready", False: "Not Ready", None: "—"}
 
 
 class _MediaModel(QAbstractTableModel):
@@ -60,7 +58,7 @@ class _MediaModel(QAbstractTableModel):
             col = _COLUMNS[index.column()]
             val = row[col]
             if col == "ready":
-                return _READY_DISPLAY.get(val, "—")
+                return status_text(val)
             return "" if val is None else str(val)
         if role == Qt.ForegroundRole and _COLUMNS[index.column()] == "ready":
             return QBrush(QColor(status_color(row["ready"])))
@@ -111,11 +109,7 @@ class MediaTablePane(QTableView):
     def _on_selection_changed(self, _selected, _deselected):
         if self._suppress:
             return
-        ids = [
-            self._model.media_id_at(idx.row())
-            for idx in self.selectionModel().selectedRows()
-        ]
-        self.selection_changed.emit(ids)
+        self.selection_changed.emit(self.selected_media_ids())
 
     def highlight_media_ids(self, media_ids: list):
         """Select rows matching media_ids (called from thumbnail pane)."""

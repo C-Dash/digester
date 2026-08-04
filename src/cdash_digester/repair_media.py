@@ -45,6 +45,7 @@ from typing import Iterable, List, Optional, Tuple
 from PIL import Image
 
 from . import prescreener
+from .models import REPAIR_ISSUE_SEP
 from .exiftool_util import read_tags, write_orientation
 
 # repair_reject.csv column headers and the Repair_Action values that carry
@@ -93,7 +94,7 @@ def parse_repair_issues(issues: str | Iterable[str] | None) -> List[str]:
     if not issues:
         return []
     if isinstance(issues, str):
-        raw_issues = issues.split(",")
+        raw_issues = issues.split(REPAIR_ISSUE_SEP.strip())
     else:
         raw_issues = issues
 
@@ -247,15 +248,15 @@ def _apply_pixel_repairs_and_commit(
             msg = f"Cannot save repaired image: {exc}"
             return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
         size_mb = buf.tell() / (1024 * 1024)
-        if size_mb > prescreener._MAX_FILE_MB:
+        if size_mb > prescreener.MAX_FILE_MB:
             msg = (
                 f"Still {size_mb:.1f} MB after compression "
-                f"(limit {prescreener._MAX_FILE_MB} MB) — cannot repair; "
+                f"(limit {prescreener.MAX_FILE_MB} MB) — cannot repair; "
                 f"use the Reject action."
             )
             return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
         applied.append(
-            f"size now {size_mb:.1f} MB, within {prescreener._MAX_FILE_MB} MB limit"
+            f"size now {size_mb:.1f} MB, within {prescreener.MAX_FILE_MB} MB limit"
         )
 
     # Only now commit: back up the original, then write the repaired image.

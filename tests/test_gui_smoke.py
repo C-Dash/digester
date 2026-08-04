@@ -11,7 +11,7 @@ from cdash_digester.gui.folder_info_pane import FolderInfoPane
 from cdash_digester.gui.folder_pane import FolderPane
 from cdash_digester.gui.media_table import MediaTablePane
 from cdash_digester.gui.thumbnail_pane import ThumbnailPane
-from cdash_digester.gui.main_window import _AboutDialog, _AssignDialog
+from cdash_digester.gui.dialogs import AboutDialog, AssignDialog
 
 from PySide6.QtWidgets import QLabel
 
@@ -21,7 +21,7 @@ def _dialog_labels(dlg):
 
 
 def test_about_dialog_shows_version_and_build_date(qtbot):
-    dlg = _AboutDialog()
+    dlg = AboutDialog()
     qtbot.addWidget(dlg)
     texts = [w.text() for w in dlg.findChildren(QLabel)]
     assert any(__version__ in t for t in texts)
@@ -29,13 +29,13 @@ def test_about_dialog_shows_version_and_build_date(qtbot):
 
 
 def test_assign_dialog_shows_selected_count(qtbot):
-    dlg = _AssignDialog(3)
+    dlg = AssignDialog(3)
     qtbot.addWidget(dlg)
     assert any("3 media files selected" == t for t in _dialog_labels(dlg))
 
 
 def test_assign_dialog_count_is_singular_for_one(qtbot):
-    dlg = _AssignDialog(1)
+    dlg = AssignDialog(1)
     qtbot.addWidget(dlg)
     assert any("1 media file selected" == t for t in _dialog_labels(dlg))
 
@@ -193,8 +193,8 @@ def test_folder_info_pane_shows_folder(qtbot):
     })
     pane.show_folder(folder)
     assert "F1-Main-OF101" in pane._name.text()   # shows the os folder name
-    assert pane._name_status.text() == "ok"   # name_ready True
-    assert pane._media_status.text() == "NO"   # media_ready False
+    assert pane._name_status.text() == "Ready"       # name_ready True
+    assert pane._media_status.text() == "Not Ready"  # media_ready False
     assert pane._note.text() == "two-page doc"
 
 
@@ -246,7 +246,7 @@ def test_folder_info_pane_shows_unparseable_folder(qtbot):
         "notes": "Folder name not in CDASH format",
     }))
     assert "Nonsense" in pane._name.text()
-    assert pane._name_status.text() == "NO"
+    assert pane._name_status.text() == "Not Ready"
     assert pane._note.text() == "Folder name not in CDASH format"
 
 

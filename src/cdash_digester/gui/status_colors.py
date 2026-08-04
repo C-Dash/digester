@@ -15,11 +15,21 @@ palette used to live here unused — don't reintroduce one.
 
 # True = ready/green, False = not-ready/red, None = pending/grey
 _STRONG = {True: "#2d8a2d", False: "#cc0000", None: "#888888"}
+_TEXT   = {True: "Ready", False: "Not Ready", None: "—"}
 
 
 def status_color(ready) -> str:
     """Strong hex color for a single tri-state ready value."""
     return _STRONG.get(ready, _STRONG[None])
+
+
+def status_text(ready) -> str:
+    """Display label for a single tri-state ready value.
+
+    Shared so every pane says the same thing; the media table and the
+    folder-info strip used to have separate vocabularies ("Not Ready" vs "NO").
+    """
+    return _TEXT.get(ready, _TEXT[None])
 
 
 def _combine(name_ready, media_ready):

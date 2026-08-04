@@ -43,13 +43,14 @@ format="Unreadable" only when that guess also fails.
 """
 
 import argparse
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Tuple
 
 import filetype
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from PIL.ExifTags import TAGS
 import fitz  # pymupdf
 
@@ -59,12 +60,22 @@ from .exiftool_util import read_tags
 # Constants
 # ---------------------------------------------------------------------------
 
-_MAX_FILE_MB = 100.0
-_MAX_PDF_MB = 200.0
-_MAX_MEGAPIXELS = 108_000_000   # 108 MP
+# Acceptance limits — public: these are the screening policy, and
+# repair_media re-checks MAX_FILE_MB after compressing an oversized TIFF.
+MAX_FILE_MB = 100.0
+MAX_PDF_MB = 200.0
+MAX_MEGAPIXELS = 108_000_000   # 108 MP
 _TIFF_LZW = 5                   # TIFF compression tag value for LZW
 
 _ACCEPTED_SUFFIXES = {".jpg", ".jpeg", ".tif", ".tiff", ".pdf"}
+
+# PDF/A conformance level, in either element (<x:conformance>B</x:conformance>)
+# or attribute (conformance="B") form, whatever namespace prefix the file uses.
+# Levels A/B/U/E/F cover PDF/A-1 through -4.
+_PDFA_CONFORMANCE_RE = re.compile(
+    r'(?::conformance>\s*([ABUEF])\s*<|conformance\s*=\s*"([ABUEF])")',
+    re.IGNORECASE,
+)
 
 # PIL modes that need no repair for each image type.
 # Any mode outside this set is added to props["repair_issues"].
@@ -97,6 +108,18 @@ _MODE_DESCRIPTIONS = {
 # Low-level file screening
 # ---------------------------------------------------------------------------
 
+def _ctime_date(filepath: Path) -> str:
+    """Filesystem creation date as YYYY-MM-DD — the capture-date fallback used
+    whenever no EXIF/PDF date is available."""
+    return datetime.fromtimestamp(filepath.stat().st_ctime).strftime("%Y-%m-%d")
+
+
+def _set_filesystem_date(props: dict, filepath: Path):
+    """Fill capture_date from the filesystem, marking the source."""
+    props["capture_date"] = _ctime_date(filepath)
+    props["date_source"] = "filesystem"
+
+
 def _filetype_fallback(filepath: Path) -> str:
     """Best-effort format guess via magic bytes when PIL/fitz can't identify
     the file. Returns the short extension (e.g. "ZIP", "MP4") or
@@ -126,18 +149,7 @@ def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
         doc.close()
         fitz.TOOLS.mupdf_warnings(reset=True)
         has_pdfa_ns = "aiim.org/pdfa/ns/id/" in xmp
-        has_conformance = any(
-            marker in xmp for marker in (
-                ":conformance>B<", ":conformance>b<",
-                ":conformance>A<", ":conformance>a<",
-                ":conformance>U<", ":conformance>u<",
-                ":conformance>E<", ":conformance>F<",
-                'conformance="B"', 'conformance="b"',
-                'conformance="A"', 'conformance="a"',
-                'conformance="U"', 'conformance="u"',
-                'conformance="E"', 'conformance="F"',
-            )
-        )
+        has_conformance = bool(_PDFA_CONFORMANCE_RE.search(xmp))
         if has_pdfa_ns and has_conformance:
             return True, "PDF/A conformance marker found", "PDF/A"
         return False, "Non-archival PDF", "PDF"
@@ -175,12 +187,8 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         # PNG is readable but still not a supported format). PIL is still
         # given a chance to identify the mode for display purposes.
         try:
-            st = filepath.stat()
-            props["file_size_mb"] = st.st_size / (1024 * 1024)
-            props["capture_date"] = datetime.fromtimestamp(
-                st.st_ctime
-            ).strftime("%Y-%m-%d")
-            props["date_source"] = "filesystem"
+            props["file_size_mb"] = filepath.stat().st_size / (1024 * 1024)
+            _set_filesystem_date(props, filepath)
         except OSError:
             pass
         try:
@@ -219,7 +227,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     try:
         mb = filepath.stat().st_size / (1024 * 1024)
         props["file_size_mb"] = mb
-        max_mb = _MAX_PDF_MB if suffix == ".pdf" else _MAX_FILE_MB
+        max_mb = MAX_PDF_MB if suffix == ".pdf" else MAX_FILE_MB
         if mb > max_mb:
             if suffix in (".tif", ".tiff") and "Compress LZW" in props["repair_issues"]:
                 props["repair_issues"].append("Check MBs")
@@ -260,10 +268,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         except Exception:
             pass
         if props["capture_date"] is None:
-            props["capture_date"] = datetime.fromtimestamp(
-                filepath.stat().st_ctime
-            ).strftime("%Y-%m-%d")
-            props["date_source"] = "filesystem"
+            _set_filesystem_date(props, filepath)
         return ok, props
 
     # Image path (JPEG / TIFF)
@@ -274,7 +279,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     try:
         if img is None:
             img = Image.open(filepath)
-    except (UnidentifiedImageError, Exception) as exc:
+    except Exception as exc:
         props["format_issues"].append(f"Cannot open image: {exc}")
         props["format"] = _filetype_fallback(filepath)
         props["repair_issues"] = ["Reject"]
@@ -291,7 +296,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     props["pixel_height"] = h
 
     # Megapixel check
-    if w * h > _MAX_MEGAPIXELS:
+    if w * h > MAX_MEGAPIXELS:
         props["format_issues"].append(
             f"Exceeds 108 MP: {w * h / 1_000_000:.1f} MP ({w}×{h})"
         )
@@ -305,10 +310,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         props["capture_date"] = str(raw)[:10].replace(":", "-")
         props["date_source"]  = "exif"
     if props["capture_date"] is None:
-        props["capture_date"] = datetime.fromtimestamp(
-            filepath.stat().st_ctime
-        ).strftime("%Y-%m-%d")
-        props["date_source"] = "filesystem"
+        _set_filesystem_date(props, filepath)
 
     # Format-specific checks
     if suffix in (".jpg", ".jpeg"):

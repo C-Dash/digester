@@ -7,6 +7,7 @@ all cache logic lives here.
 from pathlib import Path
 from typing import Tuple
 
+from ..models import split_format_issues
 from ..prescreener import screen_file
 from ..repair_media import parse_repair_issues
 
@@ -42,8 +43,8 @@ class ScreeningService:
                 "format":        cached["format"],
                 "capture_date":  cached["capture_date"],
                 "date_source":   cached["date_source"],
-                "format_issues": (cached["format_issues"].split("|")
-                                   if cached["format_issues"] else []),
+                "format_issues": split_format_issues(
+                    cached["format_issues"]),
                 "repair_issues": parse_repair_issues(cached["repair_issues"]),
                 "pdf_pages":     cached["pdf_pages"],
             }

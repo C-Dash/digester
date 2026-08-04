@@ -9,15 +9,7 @@ from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QSizePolicy, QWidget,
 )
 
-from .status_colors import folder_color, status_color
-
-
-def _status_text(ready) -> str:
-    if ready is True:
-        return "ok"
-    if ready is False:
-        return "NO"
-    return "—"
+from .status_colors import folder_color, status_color, status_text
 
 
 class FolderInfoPane(QFrame):
@@ -82,5 +74,5 @@ class FolderInfoPane(QFrame):
 
     @staticmethod
     def _set_status(label: QLabel, ready):
-        label.setText(_status_text(ready))
+        label.setText(status_text(ready))
         label.setStyleSheet(f"color: {status_color(ready)}; font-weight: bold;")

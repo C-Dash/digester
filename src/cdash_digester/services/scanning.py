@@ -14,6 +14,7 @@ from ..cdash_objects import (
     DOC_TYPES,
     parse_batch_name, parse_folder_name, parse_media_name, slugify,
 )
+from ..models import join_format_issues, join_repair_issues
 from .validation import PLACE_FOLDER_MISMATCH_NOTE
 
 
@@ -216,8 +217,8 @@ class FolderScanner:
 
         # 1. Format screening (cache → prescreener)
         accepted, props = dig._screening.screen(filepath)
-        repair_issues = ", ".join(props.get("repair_issues", []))
-        format_issues = "|".join(props.get("format_issues", []))
+        repair_issues = join_repair_issues(props.get("repair_issues"))
+        format_issues = join_format_issues(props.get("format_issues"))
         if not accepted:
             dig.log(f"    Format issue: {format_issues}", "warning")
 

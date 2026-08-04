@@ -3,6 +3,8 @@
 Images are synthesised with Pillow; no ExifTool or network needed.
 """
 
+import pytest
+import cdash_digester.prescreener as pres
 from cdash_digester.prescreener import screen_file
 from conftest import make_image, make_tiff, make_multiframe_tiff, make_pdf
 
@@ -70,7 +72,7 @@ def test_tiff_16bit_flags_flatten(tmp_path):
 
 def test_tiff_uncompressed_oversized_flags_check_mbs_not_rejected(tmp_path, monkeypatch):
     import cdash_digester.prescreener as pres
-    monkeypatch.setattr(pres, "_MAX_FILE_MB", 0.0)
+    monkeypatch.setattr(pres, "MAX_FILE_MB", 0.0)
     p = make_tiff(tmp_path / "a.tif", "RGB", compression=None)
     accepted, props = screen_file(p)
     assert accepted is False
@@ -81,7 +83,7 @@ def test_tiff_uncompressed_oversized_flags_check_mbs_not_rejected(tmp_path, monk
 
 def test_tiff_compressed_oversized_rejected(tmp_path, monkeypatch):
     import cdash_digester.prescreener as pres
-    monkeypatch.setattr(pres, "_MAX_FILE_MB", 0.0)
+    monkeypatch.setattr(pres, "MAX_FILE_MB", 0.0)
     p = make_tiff(tmp_path / "a.tif", "RGB", compression="tiff_lzw")
     accepted, props = screen_file(p)
     assert accepted is False
@@ -164,7 +166,7 @@ def test_corrupt_jpeg_flags_reject_and_unreadable(tmp_path):
 
 def test_megapixel_exceeded_flags_reject(tmp_path, monkeypatch):
     import cdash_digester.prescreener as pres
-    monkeypatch.setattr(pres, "_MAX_MEGAPIXELS", 10)
+    monkeypatch.setattr(pres, "MAX_MEGAPIXELS", 10)
     p = make_tiff(tmp_path / "a.tif", "RGB", compression="tiff_lzw")
     accepted, props = screen_file(p)
     assert accepted is False
@@ -176,3 +178,31 @@ def test_32bit_float_tiff_flags_reject(tmp_path):
     accepted, props = screen_file(p)
     assert accepted is False
     assert props["repair_issues"] == ["Reject"]
+
+
+# ------------------------------------------------------- PDF/A conformance regex
+
+@pytest.mark.parametrize("xmp", [
+    "<pdfaid:conformance>B</pdfaid:conformance>",
+    "<x:conformance>b</x:conformance>",          # any namespace prefix
+    "<pdfaid:conformance> A </pdfaid:conformance>",
+    'pdfaid:conformance="U"',
+    'conformance="f"',
+    "<pdfaid:conformance>E</pdfaid:conformance>",
+])
+def test_pdfa_conformance_regex_accepts_known_forms(xmp):
+    """Element and attribute forms, any prefix, any level A/B/U/E/F, any case.
+
+    Replaced 16 hand-written literal markers; this pins the equivalence.
+    """
+    assert pres._PDFA_CONFORMANCE_RE.search(xmp)
+
+
+@pytest.mark.parametrize("xmp", [
+    "",
+    "<pdfaid:part>1</pdfaid:part>",              # part is not conformance
+    "<pdfaid:conformance>Z</pdfaid:conformance>",  # not a real level
+    'conformance="Z"',
+])
+def test_pdfa_conformance_regex_rejects_other_text(xmp):
+    assert pres._PDFA_CONFORMANCE_RE.search(xmp) is None

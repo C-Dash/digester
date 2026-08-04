@@ -155,7 +155,7 @@ class CDASHValidator:
             return "Valid CDASH place", props
         except requests.exceptions.RequestException as e:
             return f"ERROR: API unreachable — {e}", {}
-        except (json.JSONDecodeError, Exception) as e:
+        except Exception as e:
             return f"ERROR: {e}", {}
 
     # --------------------------------------------- folder validation
@@ -180,7 +180,7 @@ class CDASHValidator:
             return "Valid CDASH folder", name
         except requests.exceptions.RequestException as e:
             return f"ERROR: API unreachable — {e}", ""
-        except (json.JSONDecodeError, Exception) as e:
+        except Exception as e:
             return f"ERROR: {e}", ""
 
     def close(self):

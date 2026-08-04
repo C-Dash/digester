@@ -1,170 +1,30 @@
 """
 Main Window
 
-Entry point for the CDASH Presort Digester GUI.  Assembles the splitter
-layout, menu bar, console dock, and wires all signals together.
-
-Long-running digester operations are dispatched to a QThread so the UI
-stays responsive.  The worker redirects the digester's log callback to a
-Qt signal, which Qt routes safely back to the main thread.
+Assembles the splitter layout, menu bar, console dock, and wires all signals
+together. Long-running digester operations are dispatched to a Worker thread
+(see worker.py) so the UI stays responsive; the application entry point lives
+in app.py.
 """
 
-import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
-from PySide6.QtCore import QLoggingCategory, QThread, QUrl, Signal, Slot, Qt
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPalette
+from PySide6.QtCore import QUrl, Slot, Qt
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QDialogButtonBox,
-    QFileDialog, QFormLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
-    QRadioButton, QSplitter, QVBoxLayout, QWidget,
+    QDialog, QFileDialog, QMainWindow, QMessageBox, QScrollArea, QSplitter,
+    QVBoxLayout, QWidget,
 )
 
-from .. import __build_date__, __version__
-from ..cdash_objects import DOC_TYPES
 from ..digester import Digester
 from .console_window import ConsoleWindow
+from .dialogs import AboutDialog, AssignDialog
 from .folder_info_pane import FolderInfoPane
 from .folder_pane import FolderPane, folder_key
 from .media_table import MediaTablePane
 from .thumbnail_pane import ThumbnailPane
-
-
-# ---------------------------------------------------------------------------
-# Background worker
-# ---------------------------------------------------------------------------
-
-class _Worker(QThread):
-    """Runs one digester operation off the main thread.
-
-    The operation is a bound callable plus its arguments, so there is no op-name
-    string to typo and no dispatch table to keep in sync. A multi-step operation
-    should be a single callable that performs every step (see
-    ``MainWindow._open_and_scan``) rather than two chained ``_run`` calls: the
-    ``done`` signal fires from inside ``run()``, so a second ``_run`` invoked
-    from an ``on_finish`` handler can still see ``isRunning()`` and be refused.
-
-    Threading model
-    ---------------
-    The Digester holds a single SQLite connection shared between this worker
-    thread and the GUI main thread (the connection is opened with
-    ``check_same_thread=False``).  Safety depends on that connection never
-    being touched concurrently from both threads.  This is enforced by the
-    main window, not by a lock in the persistence layer:
-
-      * Long-running operations run here, on the worker thread.
-      * Main-thread DB reads (folder clicks) and the synchronous Assign/Repair
-        handlers run only when the window is idle.
-      * ``MainWindow._run`` gates the UI busy (``_set_busy``) for the lifetime
-        of a worker, so the main thread cannot issue a query or start another
-        operation until ``done`` fires.  The two therefore never overlap.
-    """
-
-    log_message = Signal(str, str)   # (message, level)
-    done        = Signal()           # avoid shadowing QThread.finished
-    error       = Signal(str)
-
-    def __init__(self, digester: Digester, fn, *args, **kwargs):
-        super().__init__()
-        self.digester = digester
-        self._fn      = fn
-        self._args    = args
-        self._kwargs  = kwargs
-
-    def run(self):
-        # Redirect digester log to a cross-thread signal. Anything the callable
-        # logs via digester.log — including nested service calls — reaches the
-        # console this way, which is why worker-side work should log rather
-        # than return values.
-        original_log = self.digester.log
-        self.digester.log = lambda msg, lvl: self.log_message.emit(msg, lvl)
-        try:
-            self._fn(*self._args, **self._kwargs)
-        except Exception as exc:
-            self.error.emit(f"{type(exc).__name__}: {exc}")
-        finally:
-            self.digester.log = original_log
-            self.done.emit()
-
-
-# ---------------------------------------------------------------------------
-# Metadata assignment dialog
-# ---------------------------------------------------------------------------
-
-class _AssignDialog(QDialog):
-    """Collect place ID, document type, and page-grouping choice."""
-
-    def __init__(self, count: int, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Assign Metadata")
-        self.setMinimumWidth(380)
-
-        layout = QFormLayout(self)
-
-        header = QLabel(f"{count} media file{'s' if count != 1 else ''} selected")
-        header.setStyleSheet("font-weight: bold;")
-        layout.addRow(header)
-
-        self._place_edit = QLineEdit()
-        self._place_edit.setPlaceholderText("No Change")
-        layout.addRow("Place ID:", self._place_edit)
-
-        self._type_combo = QComboBox()
-        self._type_combo.addItem("— No Change —", None)
-        for code, desc in DOC_TYPES.items():
-            self._type_combo.addItem(f"{code} — {desc}", code)
-        layout.addRow("Document Type:", self._type_combo)
-
-        layout.addRow(QLabel("Grouping:"))
-        self._multi  = QRadioButton("All files are pages of one document")
-        self._single = QRadioButton("Each file is a separate single-page document")
-        self._multi.setChecked(True)
-        layout.addRow("", self._multi)
-        layout.addRow("", self._single)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addRow(buttons)
-
-    @property
-    def place_is_no_change(self) -> bool:
-        return self._place_edit.text().strip() == ""
-
-    @property
-    def place_id(self) -> Optional[int]:
-        try:
-            return int(self._place_edit.text().strip())
-        except ValueError:
-            return None
-
-    @property
-    def doc_type_code(self) -> str:
-        return self._type_combo.currentData()
-
-    @property
-    def is_multi_page(self) -> bool:
-        return self._multi.isChecked()
-
-
-# ---------------------------------------------------------------------------
-# About dialog
-# ---------------------------------------------------------------------------
-
-class _AboutDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("About CDASH Presort Digester")
-        self.setMinimumWidth(300)
-        layout = QVBoxLayout(self)
-        title = QLabel("<b>CDASH Presort Digester</b>")
-        layout.addWidget(title)
-        layout.addWidget(QLabel(f"Version: {__version__}"))
-        layout.addWidget(QLabel(f"Build date: {__build_date__}"))
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+from .worker import Worker
 
 
 # ---------------------------------------------------------------------------
@@ -181,10 +41,13 @@ class MainWindow(QMainWindow):
         self.digester:  Optional[Digester] = None
         self.batch_root: Optional[Path]    = None
         self._current_folder = None   # currently selected folder row
-        self._worker: Optional[_Worker] = None
+        self._worker: Optional[Worker] = None
         # Set by _do_assign on the worker thread, shown by _after_assign on the
         # main thread (dialogs cannot be raised off the main thread).
         self._assign_error: Optional[str] = None
+        # media_ids of the loaded folder that Rotate applies to, resolved once
+        # per folder load so selection changes don't re-hit the DB.
+        self._rotatable_ids: set = set()
 
         self._build_ui()
         self._build_menus()
@@ -244,8 +107,10 @@ class MainWindow(QMainWindow):
         # re-emit selection_changed, so exactly one of these two fires per
         # genuine user selection change — both must be connected to catch
         # either source.
-        self.media_table.selection_changed.connect(self._sync_rotate_enabled)
-        self.thumbnail_pane.selection_changed.connect(self._sync_rotate_enabled)
+        self.media_table.selection_changed.connect(
+            lambda _ids: self._sync_actions())
+        self.thumbnail_pane.selection_changed.connect(
+            lambda _ids: self._sync_actions())
         self.folder_pane.folder_selected.connect(self._on_folder_selected)
 
     def _build_menus(self):
@@ -341,7 +206,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _show_about(self):
-        _AboutDialog(self).exec()
+        AboutDialog(self).exec()
 
     @Slot()
     def _choose_batch_folder(self):
@@ -367,12 +232,12 @@ class MainWindow(QMainWindow):
     def _after_batch_opened(self):
         """Main-thread half: wire up the UI for the freshly scanned batch."""
         self._after_load()
-        if not self.digester or not self.digester.is_open:
+        if not self._batch_is_open():
             return              # invalid batch — _after_load logged why
         self._reload_after_folder_scan()
 
     def _after_load(self):
-        if not self.digester or not self.digester.is_open:
+        if not self._batch_is_open():
             self.console.append_message(
                 "Batch load failed — the batch folder must be named "
                 "CDB<YYMMDD>-<name> and contain a 'media/' subfolder whose "
@@ -396,8 +261,7 @@ class MainWindow(QMainWindow):
         # so the folder list isn't loaded (and logged) twice on open.
         for act in self._batch_actions():
             act.setEnabled(True)
-        self._sync_csv_enabled()   # CSV stays dim until the batch is ready
-        self._sync_rotate_enabled([])   # no selection yet on a fresh load
+        self._sync_actions()   # CSV dim until ready; nothing selected yet
 
     @Slot()
     def _initialize_batch(self):
@@ -419,12 +283,12 @@ class MainWindow(QMainWindow):
 
     def _log_status_summary(self):
         """Worker-thread: push the status summary out through digester.log,
-        which _Worker has redirected to the console."""
+        which Worker has redirected to the console."""
         self.digester.log(self.digester.get_status_summary(), "info")
 
     @Slot()
     def _purge_caches(self):
-        if not self.digester or not self.digester.is_open:
+        if not self._batch_is_open():
             return
         resp = QMessageBox.question(
             self, "Purge Validation Caches",
@@ -458,12 +322,17 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_folder_selected(self, folder):
         self._current_folder = folder
-        if not self.digester or not self.digester.is_open:
+        if not self._batch_is_open():
             return
         self.folder_info.show_folder(folder)
         item_set_id = folder["item_set_id"]
         rows = (self.digester.get_media_for_folder(item_set_id)
                 if item_set_id is not None else [])
+        # Resolve rotatability once per folder load; _sync_actions then just
+        # intersects the selection against this set.
+        self._rotatable_ids = set(
+            self.digester.rotatable_media_ids([r["media_id"] for r in rows])
+        ) if rows else set()
         self.media_table.load_media(rows)
         self.thumbnail_pane.load_media(rows, self.batch_root)
 
@@ -474,7 +343,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Selection",
                                     "Select one or more media files first.")
             return
-        dlg = _AssignDialog(len(media_ids), self)
+        dlg = AssignDialog(len(media_ids), self)
         if dlg.exec() != QDialog.Accepted:
             return
 
@@ -496,7 +365,7 @@ class MainWindow(QMainWindow):
         """Worker-thread: validate the place, assign metadata, rescan.
 
         The follow-up rescan happens here rather than as a second _run from
-        on_finish — see _Worker on why chained _run calls can be refused.
+        on_finish — see Worker on why chained _run calls can be refused.
         A validation failure is stashed for _after_assign to show modally,
         since dialogs must be raised on the main thread.
         """
@@ -529,111 +398,82 @@ class MainWindow(QMainWindow):
             self._assign_error = None
         self._reload_after_folder_scan()
 
-    @Slot()
-    def _repair_selected_media(self):
-        if not self.digester or not self.digester.is_open:
-            return
+    def _run_media_op(self, eligible_fn, op_fn, *op_args, verb: str,
+                      skip_reason: str, detail: str = "",
+                      empty_title: str = None, empty_msg: str = None):
+        """Shared body for Repair / Reject / Rotate.
 
+        Narrows the current selection to the files the operation applies to,
+        reports what was skipped, and dispatches the op to a worker. Passing
+        empty_title=None makes the "nothing selected"/"nothing eligible" cases
+        silent, for actions whose menu item is already gated on selection.
+        """
         media_ids = self.media_table.selected_media_ids()
         if not media_ids:
-            QMessageBox.information(
-                self,
-                "No Selection",
-                "Select one or more media files first.",
-            )
+            if empty_title:
+                QMessageBox.information(
+                    self, "No Selection",
+                    "Select one or more media files first.")
             return
 
-        repairable_ids = self.digester.repairable_media_ids(media_ids)
-        skipped = len(media_ids) - len(repairable_ids)
-
-        if not repairable_ids:
-            QMessageBox.information(
-                self,
-                "No Repair Issues",
-                "None of the selected media files have repair issues.",
-            )
+        eligible = eligible_fn(media_ids)
+        skipped = len(media_ids) - len(eligible)
+        if not eligible:
+            if empty_title:
+                QMessageBox.information(self, empty_title, empty_msg)
             return
 
         self.console.append_message(
-            f"Repairing {len(repairable_ids)} selected media file(s)...",
-            "info",
-        )
+            f"{verb} {len(eligible)} selected media file(s){detail}...", "info")
         if skipped:
             self.console.append_message(
-                f"Skipping {skipped} selected file(s) with no repair issues.",
-                "info",
-            )
-        self._run(self.digester.repair_media_files, repairable_ids,
+                f"Skipping {skipped} selected file(s) {skip_reason}.", "info")
+        self._run(op_fn, eligible, *op_args,
                   on_finish=self._reload_after_folder_scan)
+
+    @Slot()
+    def _repair_selected_media(self):
+        if not self._batch_is_open():
+            return
+        self._run_media_op(
+            self.digester.repairable_media_ids,
+            self.digester.repair_media_files,
+            verb="Repairing",
+            skip_reason="with no repair issues",
+            empty_title="No Repair Issues",
+            empty_msg="None of the selected media files have repair issues.",
+        )
 
     @Slot()
     def _reject_selected_media(self):
-        if not self.digester or not self.digester.is_open:
+        if not self._batch_is_open():
             return
-
-        media_ids = self.media_table.selected_media_ids()
-        if not media_ids:
-            QMessageBox.information(
-                self,
-                "No Selection",
-                "Select one or more media files first.",
-            )
-            return
-
-        rejectable_ids = self.digester.rejectable_media_ids(media_ids)
-        skipped = len(media_ids) - len(rejectable_ids)
-
-        if not rejectable_ids:
-            QMessageBox.information(
-                self,
-                "No Reject-Flagged Media",
-                "None of the selected media files are flagged Reject.",
-            )
-            return
-
-        self.console.append_message(
-            f"Rejecting {len(rejectable_ids)} selected media file(s)...",
-            "info",
+        self._run_media_op(
+            self.digester.rejectable_media_ids,
+            self.digester.reject_media_files,
+            verb="Rejecting",
+            skip_reason="not flagged Reject",
+            empty_title="No Reject-Flagged Media",
+            empty_msg="None of the selected media files are flagged Reject.",
         )
-        if skipped:
-            self.console.append_message(
-                f"Skipping {skipped} selected file(s) not flagged Reject.",
-                "info",
-            )
-        self._run(self.digester.reject_media_files, rejectable_ids,
-                  on_finish=self._reload_after_folder_scan)
 
     def _rotate_selected_media(self, direction: str):
-        if not self.digester or not self.digester.is_open:
+        # No dialogs: the Rotate actions are disabled unless the selection
+        # holds something rotatable, so both empty cases are unreachable.
+        if not self._batch_is_open():
             return
-
-        media_ids = self.media_table.selected_media_ids()
-        if not media_ids:
-            return   # menu action is disabled in this case; defensive no-op
-
-        rotatable_ids = self.digester.rotatable_media_ids(media_ids)
-        skipped = len(media_ids) - len(rotatable_ids)
-
-        if not rotatable_ids:
-            return   # same — shouldn't be reachable while the action is enabled
-
-        self.console.append_message(
-            f"Rotating {len(rotatable_ids)} selected media file(s) "
-            f"({direction})...",
-            "info",
+        self._run_media_op(
+            self.digester.rotatable_media_ids,
+            self.digester.rotate_media_files, direction,
+            verb="Rotating",
+            detail=f" ({direction})",
+            skip_reason="not eligible for rotation",
         )
-        if skipped:
-            self.console.append_message(
-                f"Skipping {skipped} selected file(s) not eligible for rotation.",
-                "info",
-            )
-        self._run(self.digester.rotate_media_files, rotatable_ids, direction,
-                  on_finish=self._reload_after_folder_scan)
 
     # --------------------------------------------------------------- helpers
 
     def _reload_folders(self):
-        if self.digester and self.digester.is_open:
+        if self._batch_is_open():
             folders = self.digester.get_folders()
             self.console.append_message(
                 f"Loading {len(folders)} folder(s) into pane.", "info"
@@ -648,13 +488,14 @@ class MainWindow(QMainWindow):
         row = self.folder_pane.current_row()
         if row is not None:
             self._on_folder_selected(row)
-        # Assign Metadata runs synchronously (no worker → no _set_busy), so
-        # re-derive the CSV action here in case batch ready changed.
-        self._sync_csv_enabled()
         # load_media() clears the table's selection without emitting
-        # selection_changed (suppressed during the reset), so Rotate's
-        # enabled state needs an explicit re-derive here too.
-        self._sync_rotate_enabled([])
+        # selection_changed (suppressed during the reset), and batch-ready may
+        # have changed, so re-derive both conditional actions explicitly.
+        self._sync_actions()
+
+    def _batch_is_open(self) -> bool:
+        """True once a batch has been successfully opened."""
+        return bool(self.digester and self.digester.is_open)
 
     def _batch_actions(self):
         """Actions that require an open batch. Excludes Choose Batch Folder
@@ -670,7 +511,7 @@ class MainWindow(QMainWindow):
         worker is busy the folder pane and the DB-touching menu actions are
         disabled, so the main thread cannot issue a query (folder click) or
         start a synchronous Assign/Repair op that would race the worker.
-        See ``_Worker`` for the full threading model.
+        See ``Worker`` for the full threading model.
         """
         self.folder_pane.setEnabled(not busy)
         # Choose Batch Folder is the only action that works without an open
@@ -678,33 +519,34 @@ class MainWindow(QMainWindow):
         # a failed open through a worker, so lifting the busy gate must not
         # blanket-enable actions that would then run against no batch.
         self._act_choose.setEnabled(not busy)
-        batch_open = bool(self.digester and self.digester.is_open)
+        batch_open = self._batch_is_open()
         for act in self._batch_actions():
             act.setEnabled(not busy and batch_open)
-        # CSV and Rotate are special: disabled while busy, and otherwise only
-        # re-enabled based on their own condition (batch ready / selection
-        # content) rather than blanket-enabled with the rest.
-        if busy:
-            self._act_csv.setEnabled(False)
-            self._act_rotate_cw.setEnabled(False)
-            self._act_rotate_ccw.setEnabled(False)
-        else:
-            self._sync_csv_enabled()
-            self._sync_rotate_enabled(self.media_table.selected_media_ids())
+        # CSV and Rotate are gated on their own conditions rather than
+        # blanket-enabled with the rest.
+        self._sync_actions(busy)
 
-    def _sync_csv_enabled(self):
-        """Enable 'Produce CSV Files' only when the batch ready status is True."""
-        batch = (self.digester.get_batch()
-                 if self.digester and self.digester.is_open else None)
+    def _sync_actions(self, busy: bool = False):
+        """Re-derive the conditionally-enabled actions (CSV, Rotate CW/CCW).
+
+        The single place these conditions live, so they cannot drift apart.
+        Everything else is blanket-gated by _set_busy; these two additionally
+        depend on batch-ready and selection content respectively.
+        """
+        if busy:
+            for act in (self._act_csv,
+                        self._act_rotate_cw, self._act_rotate_ccw):
+                act.setEnabled(False)
+            return
+
+        batch = self.digester.get_batch() if self._batch_is_open() else None
         self._act_csv.setEnabled(bool(batch and batch["ready"]))
 
-    def _sync_rotate_enabled(self, media_ids: List[int]):
-        """Enable Rotate CW/CCW only when the selection has at least one
-        rotatable file (JPEG/TIFF, not flagged Reject)."""
-        rotatable = bool(
-            self.digester and self.digester.is_open
-            and media_ids and self.digester.rotatable_media_ids(media_ids)
-        )
+        # Intersect against the rotatable set cached when the folder loaded,
+        # rather than re-querying per click: rotatable_media_ids() issues one
+        # DB read per id, and this runs on every selection change.
+        selected = set(self.media_table.selected_media_ids())
+        rotatable = bool(selected & self._rotatable_ids)
         self._act_rotate_cw.setEnabled(rotatable)
         self._act_rotate_ccw.setEnabled(rotatable)
 
@@ -712,7 +554,7 @@ class MainWindow(QMainWindow):
         """Dispatch a digester operation to a background thread.
 
         ``fn`` is called on the worker thread as ``fn(*args, **kwargs)``. The UI
-        is gated busy for the worker's lifetime (see ``_Worker``) so no
+        is gated busy for the worker's lifetime (see ``Worker``) so no
         main-thread DB access can overlap the worker on the shared connection.
         """
         if self._worker and self._worker.isRunning():
@@ -720,7 +562,7 @@ class MainWindow(QMainWindow):
                 "An operation is already running — please wait.", "warning"
             )
             return
-        self._worker = _Worker(self.digester, fn, *args, **kwargs)
+        self._worker = Worker(self.digester, fn, *args, **kwargs)
         self._worker.log_message.connect(self.console.append_message)
         self._worker.error.connect(
             lambda e: self.console.append_message(f"ERROR: {e}", "error")
@@ -733,58 +575,3 @@ class MainWindow(QMainWindow):
         self._worker.done.connect(lambda: self._set_busy(False))
         self._set_busy(True)
         self._worker.start()
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-def _apply_light_theme(app):
-    """Force a light palette regardless of the OS theme.
-
-    The app's colors are all chosen for a light background. Fusion honours the
-    custom palette; the native Windows style follows system dark mode and would
-    ignore it (which is what made the console/thumbnail text unreadable).
-    """
-    app.setStyle("Fusion")
-    pal = QPalette()
-    pal.setColor(QPalette.Window,          QColor("#f0f0f0"))
-    pal.setColor(QPalette.WindowText,      QColor("#000000"))
-    pal.setColor(QPalette.Base,            QColor("#ffffff"))
-    pal.setColor(QPalette.AlternateBase,   QColor("#f5f5f5"))
-    pal.setColor(QPalette.Text,            QColor("#000000"))
-    pal.setColor(QPalette.Button,          QColor("#f0f0f0"))
-    pal.setColor(QPalette.ButtonText,      QColor("#000000"))
-    pal.setColor(QPalette.ToolTipBase,     QColor("#ffffff"))
-    pal.setColor(QPalette.ToolTipText,     QColor("#000000"))
-    pal.setColor(QPalette.Highlight,       QColor("#3399ff"))
-    pal.setColor(QPalette.HighlightedText, QColor("#ffffff"))
-    pal.setColor(QPalette.PlaceholderText, QColor("#777777"))
-    for role in (QPalette.Text, QPalette.WindowText, QPalette.ButtonText):
-        pal.setColor(QPalette.Disabled, role, QColor("#a0a0a0"))
-    app.setPalette(pal)
-
-
-def main():
-    # When running as a PyInstaller bundle, prepend the bundle directory so
-    # ExifTool (bundled alongside the executable) is found on PATH.
-    if getattr(sys, "frozen", False):
-        import os
-        # sys._MEIPASS is the _internal/ folder where bundled binaries land.
-        _bundle_dir = getattr(sys, "_MEIPASS", str(Path(sys.executable).parent))
-        os.environ["PATH"] = _bundle_dir + os.pathsep + os.environ.get("PATH", "")
-
-    QLoggingCategory.setFilterRules("qt.gui.imageio=false")
-    app = QApplication(sys.argv)
-    _apply_light_theme(app)
-    app.setApplicationName("CDASH Presort Digester")
-    _icon_path = Path(__file__).parent / "assets" / "icon.ico"
-    if _icon_path.exists():
-        app.setWindowIcon(QIcon(str(_icon_path)))
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
-
-
-if __name__ == "__main__":
-    main()

@@ -76,7 +76,7 @@ def test_repair_reject_flagged_file_untouched(tmp_path):
 
 def test_repair_check_mbs_kept_when_now_within_limit(tmp_path, monkeypatch):
     from cdash_digester import prescreener as pres
-    monkeypatch.setattr(pres, "_MAX_FILE_MB", 1000.0)
+    monkeypatch.setattr(pres, "MAX_FILE_MB", 1000.0)
     p = make_tiff(tmp_path / "a.tif", "RGB", compression=None)
     ok, msg = repair_file(p, ["compress_lzw", "check_mbs"])
     assert ok is True
@@ -86,7 +86,7 @@ def test_repair_check_mbs_kept_when_now_within_limit(tmp_path, monkeypatch):
 
 def test_repair_check_mbs_reverts_when_still_over_limit(tmp_path, monkeypatch):
     from cdash_digester import prescreener as pres
-    monkeypatch.setattr(pres, "_MAX_FILE_MB", 0.0)
+    monkeypatch.setattr(pres, "MAX_FILE_MB", 0.0)
     p = make_tiff(tmp_path / "a.tif", "RGB", compression=None)
     original_bytes = p.read_bytes()
     ok, msg = repair_file(p, ["compress_lzw", "check_mbs"])
