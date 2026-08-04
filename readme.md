@@ -154,7 +154,14 @@ trailing letter on the batch ID disambiguates same-day batches
 | Media file stem | `<place_slug>-<doc_index:04d>p<page:04d>-<doc_type>-OP<place_id>` | `12_Reservoir_St_0017p0001-VE-OP196223` |
 
 A folder without the `F<index>` prefix is accepted on input (the scanner assigns
-the index). A rudimentary file name (e.g. `photo001.tif`) is accepted and
+the next free index and renames the folder). Once a folder carries an index it
+keeps it: the scanner reads `F<index>` from the folder's own name, so numbering
+survives **Purge Validation Caches** and the folder is not renumbered. Only the
+descriptive slug is re-canonicalised if the Omeka folder name changes. If two
+folders claim the same index, the first keeps it and the second is reassigned
+with a warning.
+
+A rudimentary file name (e.g. `photo001.tif`) is accepted and
 registered `ready=False`; any `-OP<id>` / `-<doc_type>` hint tokens in the stem
 are reused during assignment. `slugify()` replaces spaces with `_`, maps ` - `
 to `-`, and drops other non-alphanumerics.

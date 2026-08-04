@@ -52,22 +52,7 @@ class ScanService:
         folder_dirs = sorted(
             p for p in session.media_path.iterdir() if p.is_dir()
         )
-        # Folder indices are persistent: a folder already in the cache keeps its
-        # index (so it is never renamed/renumbered); a newly added folder gets
-        # the next available index.
-        next_index = session.db.max_folder_cache_index() + 1
-        for folder_dir in folder_dirs:
-            fparsed = parse_folder_name(folder_dir.name)
-            if not fparsed:
-                self._scan_folder(folder_dir, folder_index=None,
-                                  batch_id=parsed["batch_id"])
-                continue
-            cached = session.db.get_folder_cache(fparsed["item_set_id"])
-            if cached and cached["folder_index"] is not None:
-                folder_index = cached["folder_index"]
-            else:
-                folder_index = next_index
-                next_index += 1
+        for folder_dir, folder_index in self._assign_folder_indices(folder_dirs):
             self._scan_folder(folder_dir, folder_index=folder_index,
                               batch_id=parsed["batch_id"])
 
@@ -79,6 +64,67 @@ class ScanService:
             + session.counts_summary(counts),
             "info",
         )
+
+    def _assign_folder_indices(self, folder_dirs):
+        """Resolve each folder's F<index>, yielding (folder_dir, folder_index).
+
+        The folder's own on-disk name is authoritative: a folder already named
+        F3-… keeps index 3 no matter what the cache says. That is what makes
+        the numbering survive Purge Validation Caches — and with it the
+        batch_folder_id / batch_doc_id / batch_media_id values built from it,
+        which are exported as CSV identifiers.
+
+        Precedence per folder:
+          1. an index in the name, if no earlier folder claimed it;
+          2. otherwise the cached index, if free (covers a folder that lost
+             its prefix);
+          3. otherwise the next free number, which triggers a rename.
+
+        The cache is no longer the authority, only memory: it still raises the
+        allocation floor so a number is not reused for a different folder.
+        Unparseable names yield index None and are handled by _scan_folder.
+        """
+        session = self._session
+        parsed_dirs = [(d, parse_folder_name(d.name)) for d in folder_dirs]
+
+        # Never hand out a number that is already on disk or remembered in the
+        # cache, even if the folder that owns it is absent from this scan.
+        on_disk = [f["folder_index"] for _, f in parsed_dirs
+                   if f and f["folder_index"] is not None]
+        next_index = max([session.db.max_folder_cache_index()] + on_disk) + 1
+
+        claimed = {}          # folder_index -> folder name that took it
+        results = []
+        for folder_dir, fparsed in parsed_dirs:
+            if not fparsed:
+                results.append((folder_dir, None))
+                continue
+
+            named = fparsed["folder_index"]
+            if named is not None and named not in claimed:
+                folder_index = named
+            else:
+                if named is not None:
+                    session.log(
+                        f"  Duplicate folder index F{named}: '{folder_dir.name}' "
+                        f"collides with '{claimed[named]}' — reassigning to "
+                        f"F{next_index}.",
+                        "warning",
+                    )
+                    folder_index = next_index
+                    next_index += 1
+                else:
+                    cached = session.db.get_folder_cache(fparsed["item_set_id"])
+                    cached_index = cached["folder_index"] if cached else None
+                    if cached_index is not None and cached_index not in claimed:
+                        folder_index = cached_index
+                    else:
+                        folder_index = next_index
+                        next_index += 1
+
+            claimed[folder_index] = folder_dir.name
+            results.append((folder_dir, folder_index))
+        return results
 
     # ------------------------------------------------------- single folder
 
@@ -160,6 +206,15 @@ class ScanService:
             name_ready=name_ready,
         )
         session.db.assign_folder_index(item_set_id, folder_index)
+
+        # Teach the cache the index we actually used. resolve_folder_name only
+        # writes the cache on an API miss, so a name-derived index would never
+        # reach it otherwise — leaving max_folder_cache_index() stale and able
+        # to hand the same number to a different folder later. Skipped when it
+        # already agrees, to avoid a pointless write per folder per scan.
+        cached = session.db.get_folder_cache(item_set_id)
+        if cached and cached["folder_index"] != folder_index:
+            session.db.set_folder_cache_index(item_set_id, folder_index)
 
         self._scan_media_in_folder(folder_dir, item_set_id, batch_folder_id)
 

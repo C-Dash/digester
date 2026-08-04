@@ -377,6 +377,20 @@ class CacheRepo(_Repo):
         )
         self._con.commit()
 
+    def set_folder_cache_index(self, item_set_id: int, folder_index: int):
+        """Update just the cached folder_index, leaving the cached name/status.
+
+        The scanner takes the index from the folder's own on-disk name, but
+        resolve_folder_name only writes the cache on an API miss — so without
+        this the cache would never learn a name-derived index. No-op when the
+        folder has no cache row yet (validation failed or ran offline).
+        """
+        self._con.execute(
+            "UPDATE cdash_folder_cache SET folder_index=? WHERE item_set_id=?",
+            (folder_index, item_set_id),
+        )
+        self._con.commit()
+
     def max_folder_cache_index(self) -> int:
         """Highest folder_index recorded in the folder cache (0 if empty)."""
         row = self._con.execute(

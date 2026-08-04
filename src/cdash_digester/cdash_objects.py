@@ -153,6 +153,9 @@ class BatchDB:
         self._caches.upsert_folder_cache(item_set_id, cdash_folder_name,
                                          folder_index, status)
 
+    def set_folder_cache_index(self, item_set_id, folder_index):
+        self._caches.set_folder_cache_index(item_set_id, folder_index)
+
     def max_folder_cache_index(self):
         return self._caches.max_folder_cache_index()
 

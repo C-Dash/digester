@@ -44,6 +44,18 @@ touches the DB or a service directly — every call goes through `Digester`.
 
 - **Batch folder**: `CDB<YYMMDD>[a-z]?-<name>` (e.g. `CDB260320-Test_batch`)
 - **Media folder**: `[F<index>-]<slug>-OF<item_set_id>` (e.g. `F6-Mass_Ave-OF43111`)
+  - The `F<index>` in the folder's own name is **authoritative**: a folder
+    already named `F6-…` keeps index 6 across scans and cache purges. The
+    folder cache is only memory — it raises the allocation floor and covers a
+    folder that lost its prefix. Only a folder with no index gets a new number
+    (the next free one, clearing both on-disk and cached indices). A duplicate
+    claim is warned about and the later folder is reassigned. This keeps
+    `batch_folder_id` — and the `batch_doc_id`/`batch_media_id` identifiers
+    exported in `document.csv`/`media.csv` — stable. See
+    `ScanService._assign_folder_indices`.
+- **Media file stem**: `<place_slug>_<doc_index>p<page_index>-<doc_type>[-OP<place_id>]`
+  - e.g. `Mass_Ave_0027p0001-VE-OP43296`
+- **Doc types**: 2-letter codes — VE (Exterior View), VI (Interior View), RF (Research Form), AI (Architectural Inventory), VP (Plan View), and others — defined in `cdash_objects.DOC_TYPES`
 
 ## Batch Folder Structure
 

@@ -295,9 +295,9 @@ class MainWindow(QMainWindow):
             "Clear the folder, place, and file validation caches?\n\n"
             "The next scan will be slower — it re-fetches Omeka folder/place "
             "data and re-screens all files.\n\n"
-            "WARNING: the folder cache also allocates folder index numbers. "
-            "Purging it restarts numbering from F1, so the next scan may "
-            "renumber and RENAME your media folders on disk.",
+            "Folder numbering is not affected: a folder already named F<n>- "
+            "keeps that number, since the scanner reads it from the folder "
+            "name rather than the cache.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if resp != QMessageBox.Yes:
