@@ -156,3 +156,59 @@ def test_reject_skips_non_reject_media(make_batch):
     assert src.exists()   # untouched — not flagged Reject
     assert not d.rejects_path.exists()
     d.close()
+
+
+def test_reject_csv_records_format_issues(make_batch):
+    """The log says why the file needed attention, not just what was done."""
+    def build(folder):
+        make_multiframe_tiff(folder / "Main_0001p0001-VE-OP55.tif", frames=2)
+
+    d = _scan_folder(make_batch, "F1-Main-OF101", build)
+    bad_row = d.db.get_media_for_folder(101)[0]
+    assert bad_row.format_issues, "fixture should have recorded a format issue"
+
+    d.reject_media_files([bad_row.media_id])
+
+    with open(d.catalog_path / "repair_reject.csv", newline="",
+              encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert rows[0]["Format_Issues"] == bad_row.format_issues
+    d.close()
+
+
+def test_repair_reject_csv_header_is_migrated(make_batch):
+    """A batch carries its log forward, so a file written under the old
+    four-column header must be brought up to the current one — otherwise new
+    rows would sit wider than the header above them."""
+    def build(folder):
+        make_multiframe_tiff(folder / "Main_0001p0001-VE-OP55.tif", frames=2)
+
+    d = _scan_folder(make_batch, "F1-Main-OF101", build)
+    csv_path = d.catalog_path / "repair_reject.csv"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["MediaFolder", "Filename", "Repair_Issues", "Repair_Action"])
+        w.writerow(["F1", "old.tif", "flatten", "Repaired: rgba->rgb"])
+
+    bad_row = d.db.get_media_for_folder(101)[0]
+    d.reject_media_files([bad_row.media_id])
+
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        assert reader.fieldnames == [
+            "MediaFolder", "Filename", "Repair_Issues", "Repair_Action",
+            "Format_Issues"]
+        rows = list(reader)
+
+    # The pre-existing row survives, with an empty value for the new column…
+    assert rows[0]["Filename"] == "old.tif"
+    assert rows[0]["Repair_Action"] == "Repaired: rgba->rgb"
+    assert rows[0]["Format_Issues"] == ""
+    # …and the new row carries it.
+    assert rows[1]["Format_Issues"] == bad_row.format_issues
+
+    # Counts still read the migrated file correctly.
+    rejected, repaired = d._session.read_repair_reject_csv_counts()
+    assert (rejected, repaired) == (1, 1)
+    d.close()

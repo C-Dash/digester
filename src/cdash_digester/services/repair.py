@@ -62,7 +62,10 @@ class RepairService:
                 continue
 
             session.log(f"Repairing {row.filename} ({', '.join(issues)})…", "info")
-            success, message = repair_file(filepath, issues, catalog_path=session.catalog_path)
+            success, message = repair_file(
+                filepath, issues, catalog_path=session.catalog_path,
+                format_issues=row.format_issues or "",
+            )
             if success:
                 repaired += 1
                 affected_folders.add(row.item_set_id)

@@ -90,6 +90,7 @@ class RejectService:
             _append_repair_reject_csv(
                 session.catalog_path, filepath,
                 issues, REPAIR_REJECT_ACTION_REJECTED,
+                row.format_issues or "",
             )
 
             rejected += 1

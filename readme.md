@@ -264,7 +264,7 @@ stored as `INTEGER 0/1` and surfaced as Python `True/False`. Key derived flags:
 | `place.csv` | One row per validated Place (name, type, address, lat/lon, …) |
 | `document.csv` | One row per Document (title, type, page count, dates) |
 | `media.csv` | One row per media file (identifier, relation, page number) |
-| `repair_reject.csv` | Log of repair attempts/refusals and reject moves |
+| `repair_reject.csv` | Log of repair attempts/refusals and reject moves — `MediaFolder, Filename, Repair_Issues, Repair_Action, Format_Issues` |
 
 The exact column→source mappings are defined in
 [`services/export.py`](src/cdash_digester/services/export.py).

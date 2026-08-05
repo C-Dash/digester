@@ -54,8 +54,11 @@ from .exiftool_util import read_tags, write_orientation
 # counting rejects — Digester._read_repair_reject_csv_counts() matches against
 # these constants. Keep producers and consumers on them rather than on
 # repeated string literals.
+# Format_Issues is appended last on purpose. Digester's counts read this file
+# with DictReader, so if a header migration ever failed, Repair_Action staying
+# at its original position keeps the reject/repaired counts correct.
 REPAIR_REJECT_COLUMNS = [
-    "MediaFolder", "Filename", "Repair_Issues", "Repair_Action",
+    "MediaFolder", "Filename", "Repair_Issues", "Repair_Action", "Format_Issues",
 ]
 REPAIR_REJECT_ACTION_REJECTED = "Rejected"
 REPAIR_REJECT_ACTION_REPAIRED_PREFIX = "Repaired: "
@@ -106,17 +109,51 @@ def parse_repair_issues(issues: str | Iterable[str] | None) -> List[str]:
     return parsed
 
 
+def _migrate_repair_reject_header(csv_path: Path):
+    """Bring a log written by an older column set up to REPAIR_REJECT_COLUMNS.
+
+    Batches carry their repair_reject.csv forward, so appending a new column
+    would otherwise leave rows wider than the header they sit under. Rows are
+    re-read by name and rewritten under the current header, with "" for
+    columns that did not exist, so the mapping survives regardless of where
+    the new column sits.
+    """
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames == REPAIR_REJECT_COLUMNS:
+            return
+        rows = list(reader)
+
+    tmp = csv_path.with_suffix(".csv.tmp")
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=REPAIR_REJECT_COLUMNS,
+                           extrasaction="ignore")
+        w.writeheader()
+        for row in rows:
+            w.writerow({c: (row.get(c) or "") for c in REPAIR_REJECT_COLUMNS})
+    tmp.replace(csv_path)   # atomic, so a failure cannot truncate the log
+
+
 def _append_repair_reject_csv(
-    catalog_path: Path, filepath: Path, issues: List[str], action: str
+    catalog_path: Path, filepath: Path, issues: List[str], action: str,
+    format_issues: str = "",
 ) -> str:
     """Append one row to catalog/repair_reject.csv — the shared log for both
     repair attempts/refusals (repair_file) and reject moves (RejectService).
-    Returns a warning string on failure."""
+
+    format_issues is the media row's recorded format problems, carried through
+    so the log says *why* a file needed attention, not just what was done to
+    it. Callers without a DB row (the CLI) pass nothing.
+
+    Returns a warning string on failure.
+    """
     if catalog_path is None:
         return ""
     try:
         csv_path = catalog_path / "repair_reject.csv"
         write_header = not csv_path.exists()
+        if not write_header:
+            _migrate_repair_reject_header(csv_path)
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             if write_header:
@@ -126,6 +163,7 @@ def _append_repair_reject_csv(
                 filepath.name,
                 "|".join(issues),
                 action,
+                format_issues or "",
             ])
         return ""
     except Exception as exc:
@@ -148,6 +186,7 @@ def repair_file(
     filepath: Path,
     issues: List[str],
     catalog_path: Path = None,
+    format_issues: str = "",
 ) -> Tuple[bool, str]:
     """Apply repairs to filepath for the given issue codes.
 
@@ -165,9 +204,11 @@ def repair_file(
     if "reject" in issues or "multiframe_tiff" in issues:
         msg = ("Cannot repair — file is flagged Reject. Use the Reject "
                "action to move it out of the batch.")
-        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,
+                                                  format_issues)
 
-    return _apply_pixel_repairs_and_commit(filepath, issues, catalog_path)
+    return _apply_pixel_repairs_and_commit(filepath, issues, catalog_path,
+                                          format_issues=format_issues)
 
 
 def _apply_pixel_repairs_and_commit(
@@ -175,6 +216,7 @@ def _apply_pixel_repairs_and_commit(
     issues: List[str],
     catalog_path: Path,
     rotate_degrees: Optional[int] = None,
+    format_issues: str = "",
 ) -> Tuple[bool, str]:
     """Shared pixel pipeline for repair_file() and rotate_file()'s TIFF path:
     open, apply flatten/compress_lzw/check_mbs for whatever issues are
@@ -201,7 +243,8 @@ def _apply_pixel_repairs_and_commit(
         raw_img.close()
     except Exception as exc:
         msg = f"Cannot open image: {exc}"
-        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,
+                                                  format_issues)
 
     applied = []
 
@@ -246,7 +289,8 @@ def _apply_pixel_repairs_and_commit(
             img.save(buf, format="TIFF", compression="tiff_lzw", **tiff_save_kwargs)
         except Exception as exc:
             msg = f"Cannot save repaired image: {exc}"
-            return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+            return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,
+                                                  format_issues)
         size_mb = buf.tell() / (1024 * 1024)
         if size_mb > prescreener.MAX_FILE_MB:
             msg = (
@@ -254,7 +298,8 @@ def _apply_pixel_repairs_and_commit(
                 f"(limit {prescreener.MAX_FILE_MB} MB) — cannot repair; "
                 f"use the Reject action."
             )
-            return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+            return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,
+                                                  format_issues)
         applied.append(
             f"size now {size_mb:.1f} MB, within {prescreener.MAX_FILE_MB} MB limit"
         )
@@ -277,7 +322,8 @@ def _apply_pixel_repairs_and_commit(
             img.save(str(filepath), **other_save_kwargs)
     except Exception as exc:
         msg = f"Cannot save repaired image: {exc}"
-        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,
+                                                  format_issues)
 
     if rotate_degrees is not None:
         # TIFF orientation tags are never trusted — always reset to Normal
@@ -286,7 +332,8 @@ def _apply_pixel_repairs_and_commit(
         write_orientation(filepath, 1)
 
     msg = REPAIR_REJECT_ACTION_REPAIRED_PREFIX + "|".join(applied)
-    return True, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+    return True, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,
+                                                  format_issues)
 
 
 def rotate_file(
@@ -294,6 +341,7 @@ def rotate_file(
     direction: str,
     issues: str | Iterable[str] | None = None,
     catalog_path: Path = None,
+    format_issues: str = "",
 ) -> Tuple[bool, str]:
     """Rotate filepath 90 degrees. direction is "cw" or "ccw".
 
@@ -310,11 +358,13 @@ def rotate_file(
     if "reject" in issues or "multiframe_tiff" in issues:
         msg = ("Cannot rotate — file is flagged Reject. Use the Reject "
                "action to move it out of the batch.")
-        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,
+                                                  format_issues)
 
     if suffix == ".pdf":
         msg = "Rotation does not apply to PDF files"
-        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+        return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,
+                                                  format_issues)
 
     if suffix in (".jpg", ".jpeg"):
         table = _ORIENTATION_ROTATE_CW if direction == "cw" else _ORIENTATION_ROTATE_CCW
@@ -322,18 +372,22 @@ def rotate_file(
         new_value = table.get(current, table[1])
         if not write_orientation(filepath, new_value):
             msg = "Cannot write EXIF Orientation tag (is ExifTool on PATH?)"
-            return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+            return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,
+                                                  format_issues)
         msg = f"Rotated: orientation {current} -> {new_value}"
-        return True, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+        return True, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,
+                                                  format_issues)
 
     if suffix in (".tif", ".tiff"):
         degrees = -90 if direction == "cw" else 90
         return _apply_pixel_repairs_and_commit(
-            filepath, issues, catalog_path, rotate_degrees=degrees
+            filepath, issues, catalog_path, rotate_degrees=degrees,
+            format_issues=format_issues,
         )
 
     msg = "Rotation only applies to JPEG and TIFF files"
-    return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg)
+    return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,
+                                                  format_issues)
 
 
 def main():

@@ -71,6 +71,7 @@ class RotateService:
             success, message = rotate_file(
                 filepath, direction, row.repair_issues,
                 catalog_path=session.catalog_path,
+                format_issues=row.format_issues or "",
             )
             if success:
                 rotated += 1
