@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ..constants import DOC_TYPES
 from ..naming import (
+    DOC_INDEX_DELIM,
     parse_batch_name, parse_folder_name, parse_media_name, slugify,
 )
 from ..models import join_format_issues, join_repair_issues
@@ -417,7 +418,8 @@ class FolderScanner:
         entry = self.doc_tracker[doc_index]
         batch_media_id = (
             f"{batch_folder_id}-{entry['id_slug']}"
-            f"_{entry['doc_seq']:04d}p{page_num:04d}-{entry['doc_type']}"
+            f"{DOC_INDEX_DELIM}{entry['doc_seq']:04d}p{page_num:04d}"
+            f"-{entry['doc_type']}"
         )
         session.db.increment_doc_pages(
             doc_item_id,
@@ -434,7 +436,8 @@ class FolderScanner:
         # every page of a document is named for that document's place.
         if place_ok:
             new_stem = (
-                f"{entry['id_slug']}_{doc_index:04d}p{page_num:04d}"
+                f"{entry['id_slug']}{DOC_INDEX_DELIM}"
+                f"{doc_index:04d}p{page_num:04d}"
                 f"-{doc_type}-OP{place_id}"
             )
             new_name = f"{new_stem}{filepath.suffix.lower()}"

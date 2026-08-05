@@ -139,7 +139,7 @@ def test_valid_place_still_renames_and_is_ready(make_batch):
               {55: place_props("Main Place")})
 
     row = d.db.get_media_for_folder(101)[0]
-    assert row.filename == "Main_Place_0001p0001-VE-OP55.tif"
+    assert row.filename == "Main_Place-0001p0001-VE-OP55.tif"
     assert row.ready is True
     assert not (row.filename_issues or "")
     d.close()

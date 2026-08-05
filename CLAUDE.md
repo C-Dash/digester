@@ -53,8 +53,13 @@ touches the DB or a service directly — every call goes through `Digester`.
     `batch_folder_id` — and the `batch_doc_id`/`batch_media_id` identifiers
     exported in `document.csv`/`media.csv` — stable. See
     `ScanService._assign_folder_indices`.
-- **Media file stem**: `<place_slug>_<doc_index>p<page_index>-<doc_type>[-OP<place_id>]`
-  - e.g. `Mass_Ave_0027p0001-VE-OP43296`
+- **Media file stem**: `<place_slug>-<doc_index>p<page_index>-<doc_type>[-OP<place_id>]`
+  - e.g. `Mass_Ave-0027p0001-VE-OP43296`
+  - The delimiter before `<doc_index>` is **written** as `-`
+    (`naming.DOC_INDEX_DELIM`), but `_` is still **accepted** on input so
+    legacy names keep parsing — `naming._MEDIA_RE` matches `[-_]` there. A
+    legacy `_` name is renamed to the `-` form on its first scan. Note the
+    place slug itself may contain `_`; only the delimiter changed.
 - **Doc types**: 2-letter codes — VE (Exterior View), VI (Interior View), RF (Research Form), AI (Architectural Inventory), VP (Plan View), and others — defined in `cdash_objects.DOC_TYPES`
 
 ## Batch Folder Structure
@@ -229,4 +234,4 @@ ______________________________
 
 * Have the scanner look at all files in the media folder, not just ones that are admissable. FIles that are not admissable can be rendered as thumbnails, but with a not ready status and a repair issue would consist of "Reject". 
 
-* Currently, a "_" delimiter is allowed in a media file name between the place slug and the doc_index.   We recently changed the regexp in the file name parser to recognize "-" in this position.  In a few weeks, after we have processed some legacy batches, we are going to require the "-".  What we need to do now is start using the "-" doc_index delimiter when assigning file names.  This may have effects on referencing files in the logic of the app.  So be careful. 
+* Currently, a "_" delimiter is allowed in a media file name between the place slug and the doc_index.   We recently changed the regexp in the file name parser to recognize "-" in this position.  In a few weeks, after we have processed some legacy batches, we are going to require the "-".  What we need to do now is start using the "-" doc_index delimiter when assigning file names.  This may have effects on referencing files in the logic of the app.  So be careful. There is no need for complicated migration logic here, since the new release will only be launched against fresh batches with no pre-existing catalog

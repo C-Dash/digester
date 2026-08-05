@@ -34,6 +34,13 @@ _MEDIA_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The delimiter written between place slug and doc index when the app assigns
+# a name. _MEDIA_RE above still accepts "_" so legacy names keep parsing; this
+# is only the form we now produce. When "_" is finally dropped on input, the
+# change is to that character class and this comment — not a hunt for literals
+# scattered across the scan and assignment paths.
+DOC_INDEX_DELIM = "-"
+
 
 def slugify(text: str) -> str:
     """Replace spaces with underscores; drop all non-alphanumeric except - and _."""

@@ -33,10 +33,12 @@ def test_identifier_matches_filename_after_one_scan(make_batch):
               {55: place_props("Main Place")})
 
     row = d.db.get_media_for_folder(101)[0]
-    assert row.filename == "Main_Place_0001p0001-VE-OP55.tif"
+    # Assigned names use "-" between slug and doc index; the input used "_",
+    # which the parser still accepts.
+    assert row.filename == "Main_Place-0001p0001-VE-OP55.tif"
     assert "Main_Place" in row.batch_media_id
     # The stem of the identifier must match the stem of the file.
-    assert row.batch_media_id.endswith("Main_Place_0001p0001-VE")
+    assert row.batch_media_id.endswith("Main_Place-0001p0001-VE")
     d.close()
 
 
@@ -102,6 +104,13 @@ def test_no_place_id_keeps_the_parsed_slug(make_batch):
 
     row = d.db.get_media_for_folder(101)[0]
     assert row.filename == "Main_0001p0001-VE.tif"          # untouched
-    assert row.batch_media_id.endswith("Main_0001p0001-VE")
     assert "No place ID in filename" in (row.filename_issues or "")
+
+    # The identifier is always assigned in the current form, so for an
+    # unrenamed file its delimiter differs from the filename's. That is
+    # confined to files that cannot be exported: export requires the batch to
+    # be ready, and this file is not. Once the place is supplied the file is
+    # renamed and the two agree again.
+    assert row.batch_media_id.endswith("Main-0001p0001-VE")
+    assert row.ready is False
     d.close()

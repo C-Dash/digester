@@ -7,7 +7,7 @@ _current_doc_type, _current_place_info). Logic preserved verbatim.
 from typing import List, Optional, Tuple
 
 from ..constants import DOC_TYPES
-from ..naming import slugify
+from ..naming import DOC_INDEX_DELIM, slugify
 from .validation import PLACE_FOLDER_MISMATCH_NOTE
 
 
@@ -125,7 +125,8 @@ class AssignmentService:
                 for page_num, media_id in enumerate(sorted(media_ids), start=1):
                     batch_media_id = (
                         f"{batch_folder_id}-{place_slug}"
-                        f"_{next_seq:04d}p{page_num:04d}-{doc_type_code}"
+                        f"{DOC_INDEX_DELIM}{next_seq:04d}p{page_num:04d}"
+                        f"-{doc_type_code}"
                     )
                     session.db.assign_media_to_doc(media_id, doc_id, page_num,
                                                batch_media_id)
@@ -173,7 +174,8 @@ class AssignmentService:
                     )
                     batch_media_id = (
                         f"{batch_folder_id}-{eff_slug}"
-                        f"_{next_seq:04d}p0001-{effective_type}"
+                        f"{DOC_INDEX_DELIM}{next_seq:04d}p0001"
+                        f"-{effective_type}"
                     )
                     session.db.assign_media_to_doc(media_id, doc_id, 1, batch_media_id)
                     self._rename_media(media_id, eff_place_id, eff_slug,
@@ -199,7 +201,7 @@ class AssignmentService:
             return
         old_path = session.batch_path / row.filepath
         new_name = (
-            f"{place_slug}_{doc_seq:04d}p{page_num:04d}"
+            f"{place_slug}{DOC_INDEX_DELIM}{doc_seq:04d}p{page_num:04d}"
             f"-{doc_type}-OP{place_id}{old_path.suffix.lower()}"
         )
         new_path = old_path.parent / new_name
