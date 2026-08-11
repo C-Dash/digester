@@ -97,7 +97,7 @@ Key tables: `cdash_batch`, `cdash_folder`, `cdash_place`, `cdash_doc`, `cdash_me
 
 `cdash_media` important columns:
 - `ready` INTEGER (0/1) — whether file passed prescreening
-- `format` TEXT — PIL mode (e.g. `"RGB"`) or PDF flavor (`"PDF"`/`"PDF/A"`); `"Unreadable"` if the file couldn't be opened/decoded/identified
+- `format` TEXT — PIL mode (e.g. `"RGB"`) or PDF flavor: the full PDF/A profile (`"PDF/A-2B"`, `"PDF/A-4"`, `"PDF/A-2?"` when the marker is incomplete) or `"PDF"` when there is no PDF/A claim; `"Unreadable"` if the file couldn't be opened/decoded/identified
 - `format_issues` TEXT — pipe-delimited, human-readable format/repair/rejection explanations (replaces the old `qa_note`/`qa_parts`)
 - `repair_issues` TEXT — comma-separated issue codes (e.g. `"Reject"` or `"Flatten"`)
 - `filename_issues` TEXT — human-readable name-parsing / place-validation problems (was `notes`; unrelated to format). Problems only — empty means fine.
@@ -109,7 +109,51 @@ Key tables: `cdash_batch`, `cdash_folder`, `cdash_place`, `cdash_doc`, `cdash_me
 |--------|-------|
 | JPEG | 24-bit RGB, ≤ 100 MB, ≤ 108 MP |
 | TIFF | 24-bit RGB or 8-bit grayscale (L), LZW compression (tag 259 = 5), single-frame |
-| PDF | Accepted; logs if PDF/A-1b conformance marker is absent. Also probed for structural defects — see below |
+| PDF | PDF/A only, and only the profiles in `prescreener.PDFA_ADMITTED` — see below. Also probed for structural defects |
+
+### PDF/A profiles
+
+The XMP marker is read for **both** `pdfaid:part` and `pdfaid:conformance`
+(`_PDFA_PART_RE` / `_PDFA_CONFORMANCE_RE`, each matching element and attribute
+form under any namespace prefix). Reading only the conformance letter — which
+is what the screener used to do — cannot tell PDF/A-1b from PDF/A-3b, and only
+one of those is admissible.
+
+`format` carries the full profile: `PDF/A-2B`, `PDF/A-4`, `PDF/A-2?`.
+
+**Admitted** (`PDFA_ADMITTED`): `1A 1B 2A 2B 2U 4`
+**Declined**: `3A 3B 3U` and `4F` — all permit embedded files of *arbitrary*
+format, so a conforming file is a container that can carry non-archival
+payloads — plus `4E`, which permits 3D/RichMedia. One rule: **no arbitrary
+embedded files, no 3D.** `4F` is declined for the same reason as `3x`; a higher
+part number does not make it admissible.
+
+PDF/A-4's base profile has no conformance letter, hence the bare `4`.
+
+| XMP claim | `format` | Verdict |
+|---|---|---|
+| part + level, admitted | `PDF/A-2B` | accept |
+| part + level, declined | `PDF/A-3B` | **Reject** — "not an accepted PDF/A profile" |
+| part 4, no level | `PDF/A-4` | accept — complete, not partial |
+| part only, part admitted | `PDF/A-2?` | accept + "marker incomplete" note |
+| part only, part declined | `PDF/A-3?` | **Reject** |
+| level only, no part | `PDF/A-?B` | accept + note — could be any part, so not assumed to be the excluded one |
+| non-existent combination | `PDF/A-1U` | **Reject** — "not a recognised PDF/A profile" |
+| unknown part | `PDF/A-5B` | **Reject** — admit-list membership is the only test |
+| no marker | `PDF` | **Reject** — "Non-archival PDF" |
+
+A declined profile is rejected exactly like a non-PDF/A: `repair_issues =
+["Reject"]`, handled via the Reject action.
+
+This reads the file's **claim**. It is not conformance validation — a file can
+declare PDF/A-2B and not be one; that would need something like veraPDF. What
+it does guarantee is that a file claiming an inadmissible profile no longer
+passes as a generic "PDF/A".
+
+`_check_pdfa_profile` (renamed from `_check_pdf_a1b`, which stopped being
+1b-specific long ago) returns an *issues list* rather than a single message, so
+an accepted file can still report an incomplete marker; `Reject` is gated on
+the verdict alone.
 
 ### MuPDF messages (`pdf_util.py`)
 
@@ -365,4 +409,26 @@ rendered by `gui/media_table.py`, which shows both flags via `status_colors`.
 `assign_media_to_doc` sets `name_ready=1` and clears `filename_issues`:
 assignment is the operation that finishes a name, so a file completed through
 the GUI must not keep showing `Needs Doc Type` until the next scan.
+
+# Improve PDF/A conformance screening — DONE
+
+Implemented; the rule and the full case table live under "PDF/A profiles" in
+Prescreener Acceptance Criteria above. Two changes from the original sketch,
+both settled in discussion:
+
+- **`4F` is declined, not admitted.** PDF/A-4f re-permits embedded files of
+  arbitrary format — the same property that PDF/A-3 was being excluded for — so
+  admitting it would have contradicted the reason for the exclusion.
+- **`2A` is admitted.** It was on neither the admit nor the exclude list; it is
+  a real profile, strictly stronger than 2B, so it belongs with the rest of
+  part 2.
+
+Also settled: a declined profile is rejected exactly like a non-PDF/A, and an
+incomplete marker records what was found (`PDF/A-2?`) and is judged on the half
+that is present rather than collapsing to `"PDF"`.
+
+Verified against `CDB260727-Test_batch`: the batch's verdicts are **unchanged**
+(7 admitted, 1 rejected for having no XMP) — every profile present is 1A, 1B or
+2B — with the profile now named in `format`. This is a forward-looking guard,
+not a fix for existing data.
 

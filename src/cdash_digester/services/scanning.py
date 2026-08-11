@@ -10,7 +10,9 @@ preserved verbatim.
 from datetime import datetime
 from pathlib import Path
 
-from ..constants import DOC_TYPES, FILENAME_ISSUE_SEP, NEEDS_DOC_TYPE_NOTE
+from ..constants import (
+    FILENAME_ISSUE_SEP, NEEDS_DOC_TYPE_NOTE, format_doc_title,
+)
 from ..naming import (
     DOC_INDEX_DELIM, natural_key,
     parse_batch_name, parse_capture_name, parse_folder_name, parse_media_name,
@@ -433,12 +435,7 @@ class FolderScanner:
             batch_doc_id = (
                 f"{batch_folder_id}-{id_slug}-{doc_index:04d}{type_suffix}"
             )
-            # An unrecognised 2-letter code still shows itself, as before; only
-            # a genuinely absent type falls back to "Uncategorized".
-            doc_title = (
-                f"{place_name or place_slug} — "
-                f"{DOC_TYPES.get(doc_type, doc_type or 'Uncategorized')}"
-            )
+            doc_title = format_doc_title(place_name or place_slug, doc_type)
             doc_item_id = session.db.insert_doc(
                 # Never write an unverified place: cdash_doc.place_item_id is a
                 # foreign key into cdash_place, and ensure_place only inserts a

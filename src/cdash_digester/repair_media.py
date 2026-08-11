@@ -94,6 +94,14 @@ def _normalize_issue(issue: str) -> str:
 
 
 def parse_repair_issues(issues: str | Iterable[str] | None) -> List[str]:
+    """Normalize repair issue codes **for matching**: lowercased, hyphens to
+    underscores, deduped. Accepts a stored string or an iterable.
+
+    This is what makes `"reject" in parse_repair_issues(row.repair_issues)`
+    work regardless of how the code was spelled. It is deliberately lossy, so
+    it is not the way to read a stored value back for display or re-storage —
+    use models.split_repair_issues for that.
+    """
     if not issues:
         return []
     if isinstance(issues, str):

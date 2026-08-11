@@ -206,3 +206,29 @@ def test_pdfa_conformance_regex_accepts_known_forms(xmp):
 ])
 def test_pdfa_conformance_regex_rejects_other_text(xmp):
     assert pres._PDFA_CONFORMANCE_RE.search(xmp) is None
+
+
+@pytest.mark.parametrize("xmp,expected", [
+    ("<pdfaid:part>1</pdfaid:part>", "1"),
+    ("<x:part> 2 </x:part>", "2"),               # any prefix, any whitespace
+    ('pdfaid:part="3"', "3"),                    # attribute form
+    ('part="4"', "4"),
+])
+def test_pdfa_part_regex_accepts_known_forms(xmp, expected):
+    """Mirrors the conformance regex: element and attribute form, any prefix.
+    Reading the part is what tells PDF/A-1b from PDF/A-3b."""
+    m = pres._PDFA_PART_RE.search(xmp)
+    assert m is not None
+    assert (m.group(1) or m.group(2)) == expected
+
+
+@pytest.mark.parametrize("xmp", [
+    "",
+    "<pdfaid:conformance>B</pdfaid:conformance>",   # conformance is not part
+    # Extension-schema boilerplate: real files declare "part" as a property
+    # *name*. Requiring a digit is what stops it matching.
+    "<pdfaProperty:name>part</pdfaProperty:name>",
+    "<pdfaSchema:prefix>pdfaid</pdfaSchema:prefix>",
+])
+def test_pdfa_part_regex_rejects_other_text(xmp):
+    assert pres._PDFA_PART_RE.search(xmp) is None

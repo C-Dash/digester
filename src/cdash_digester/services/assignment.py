@@ -6,7 +6,7 @@ _current_doc_type, _current_place_info). Logic preserved verbatim.
 
 from typing import List, Optional, Tuple
 
-from ..constants import DOC_TYPES
+from ..constants import format_doc_title
 from ..naming import DOC_INDEX_DELIM, slugify
 from .validation import PLACE_FOLDER_MISMATCH_NOTE
 
@@ -108,7 +108,7 @@ class AssignmentService:
                 place_name = first_place_name
                 place_slug = slugify(first_place_name)
 
-        doc_title = f"{place_name} - {DOC_TYPES.get(doc_type_code, doc_type_code)}"
+        doc_title = format_doc_title(place_name, doc_type_code)
 
         try:
             if is_multi_page:
@@ -163,7 +163,7 @@ class AssignmentService:
                         next_seq += 1
                         continue
 
-                    eff_title    = f"{eff_place_name} - {DOC_TYPES.get(effective_type, effective_type)}"
+                    eff_title    = format_doc_title(eff_place_name, effective_type)
                     batch_doc_id = f"{batch_folder_id}-{eff_slug}-{next_seq:04d}-{effective_type}"
                     doc_id = session.db.insert_doc(
                         place_item_id=eff_place_id,

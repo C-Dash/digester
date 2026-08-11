@@ -9,7 +9,11 @@ Accepted formats
 ----------------
 - JPEG  : 24-bit RGB
 - TIFF  : 24-bit RGB or 8-bit grayscale, LZW compression
-- PDF   : PDF/A-1b (detected via XMP metadata marker)
+- PDF   : PDF/A, but only the profiles in PDFA_ADMITTED — 1a, 1b, 2a, 2b, 2u
+          and 4. Read from the XMP marker: both the part (pdfaid:part) and the
+          conformance level, so 1b and 3b can be told apart. PDF/A-3 (any
+          level) and PDF/A-4f are declined because they permit embedded files
+          of arbitrary format; PDF/A-4e because it permits 3D/RichMedia.
 
 Rejection criteria
 ------------------
@@ -19,7 +23,10 @@ Rejection criteria
 - Wrong colour mode
 - Unreadable / corrupt file
 - Multi-frame TIFF
-- PDF without PDF/A-1b XMP marker
+- PDF with no PDF/A XMP marker, or one claiming a profile outside
+  PDFA_ADMITTED (e.g. PDF/A-3b, PDF/A-4f), or claiming a profile that does not
+  exist (e.g. PDF/A-1u). This reads the file's *claim*; it is not conformance
+  validation, which would need something like veraPDF.
 - Any other file type found in a media folder (the scanner registers every
   file, not just the three accepted suffixes) — always
   format_issues = "Format not supported", even if PIL can open it (e.g. a
@@ -47,7 +54,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 import filetype
 from PIL import Image
@@ -78,6 +85,49 @@ _PDFA_CONFORMANCE_RE = re.compile(
     r'(?::conformance>\s*([ABUEF])\s*<|conformance\s*=\s*"([ABUEF])")',
     re.IGNORECASE,
 )
+
+# PDF/A part (the "2" in PDF/A-2B), same two serialization forms. Reading this
+# is what lets the screener tell 1B from 3B: the conformance letter alone is
+# identical for both, and only one of them is admissible.
+# Requiring a digit is also what stops the <pdfaProperty:name>part</...>
+# boilerplate inside an embedded PDF/A extension-schema description from
+# matching — some real files in the batch carry one.
+_PDFA_PART_RE = re.compile(
+    r'(?::part>\s*(\d)\s*<|part\s*=\s*"(\d)")',
+    re.IGNORECASE,
+)
+
+# The XMP namespace that marks a PDF/A claim at all.
+_PDFA_NS = "aiim.org/pdfa/ns/id/"
+
+# Accepted PDF/A profiles — screening policy, so public alongside the size and
+# pixel limits above.
+#
+# The rule is "no arbitrary embedded files, no 3D":
+#   * PDF/A-3 (any level) permits embedded files of ARBITRARY format, so a
+#     conforming PDF/A-3 is a container that can carry non-archival payloads.
+#   * PDF/A-4f re-permits exactly that for PDF 2.0, so it is excluded for the
+#     same reason — it is not admissible just because its part number is
+#     higher than 3's.
+#   * PDF/A-4e permits 3D and RichMedia annotations.
+# PDF/A-4's base profile has no conformance letter, hence the bare "4".
+# Levels that do not exist (1U, 4B, …) are absent, so a file claiming one is
+# rejected as a malformed claim rather than silently treated as its part.
+PDFA_ADMITTED = frozenset({"1A", "1B", "2A", "2B", "2U", "4"})
+
+# Parts with at least one admitted level, derived so it cannot drift from the
+# set above. Used to judge an incomplete claim: a file declaring part 3 and no
+# level is already ruled out, while part 2 and no level is not.
+_PDFA_ADMITTED_PARTS = frozenset(p[0] for p in PDFA_ADMITTED)
+
+# Every profile the standards actually define, used only to tell "this is a
+# real profile we decline" from "this claim is not a profile at all".
+_PDFA_DEFINED = frozenset({
+    "1A", "1B",
+    "2A", "2B", "2U",
+    "3A", "3B", "3U",
+    "4", "4E", "4F",
+})
 
 # PIL modes that need no repair for each image type.
 # Any mode outside this set is added to props["repair_issues"].
@@ -135,15 +185,61 @@ def _filetype_fallback(filepath: Path) -> str:
     return "Unreadable"
 
 
-def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str, list]:
-    """Return (ok, message, flavor, defects) for PDF/A conformance via XMP marker.
+def _pdfa_profile(xmp: str) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve the PDF/A profile claimed by an XMP packet.
 
-    Checks for the pdfaid namespace URI and a conformance value (A/B/U/E/F)
-    in either element or attribute form, regardless of the namespace prefix
-    used by the file.  Accepts PDF/A-1, -2, -3, and -4 at any level.
+    Returns (profile, note). `profile` is the canonical code — "2B", "4",
+    or a partial form using "?" for the half that is missing ("2?", "?B") —
+    or None when the packet makes no PDF/A claim at all. `note` explains an
+    incomplete claim, and is None when the claim is complete.
 
-    flavor is "PDF/A" when the conformance marker is present, "PDF" when
-    absent, "Unreadable" if the PDF itself can't be opened.
+    Reading the part is the whole point: <conformance>B</conformance> is
+    identical for PDF/A-1b and PDF/A-3b, and only one of those is admissible.
+
+    PDF/A-4's base profile genuinely has no conformance letter, so part 4 with
+    no letter is complete ("4"), not partial. Every other part needs one.
+    """
+    if _PDFA_NS not in xmp:
+        return None, None
+
+    part_m = _PDFA_PART_RE.search(xmp)
+    conf_m = _PDFA_CONFORMANCE_RE.search(xmp)
+    part = (part_m.group(1) or part_m.group(2)) if part_m else None
+    conf = (conf_m.group(1) or conf_m.group(2)).upper() if conf_m else None
+
+    if part and conf:
+        return f"{part}{conf}", None
+    if part == "4":
+        return "4", None
+    if part:
+        return f"{part}?", (
+            f"PDF/A marker incomplete: part {part} with no conformance level"
+        )
+    if conf:
+        return f"?{conf}", (
+            f"PDF/A marker incomplete: conformance level {conf} with no part"
+        )
+    # The namespace is declared but neither value is present — a PDF/A claim
+    # with nothing in it, which is no better than having no claim.
+    return None, None
+
+
+def _check_pdfa_profile(filepath: Path) -> Tuple[bool, list, str, list]:
+    """Return (ok, issues, flavor, defects) for a PDF's PDF/A claim.
+
+    `issues` is always folded into format_issues by the caller, so an admitted
+    file can still report something (an incomplete marker); `Reject` is added
+    only when ok is False. The previous shape returned a single message that
+    the caller appended *only* on failure, which could not express that.
+
+    flavor is the full profile — "PDF/A-2B", "PDF/A-4", "PDF/A-2?" — so the
+    catalog records which profile was claimed rather than a bare "PDF/A".
+    "PDF" when there is no claim, "Unreadable" if the file can't be opened.
+
+    This reads the *claim* in the XMP packet. It is not conformance validation
+    (that needs something like veraPDF); a file can declare PDF/A-2B and not be
+    one. What it does guarantee is that a file claiming an inadmissible profile
+    no longer slips through as a generic "PDF/A".
 
     `defects` carries anything MuPDF complained about while reading the file
     (see pdf_util). These do not make the file unreadable — MuPDF recovers —
@@ -156,16 +252,40 @@ def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str, list]:
         xmp = doc.get_xml_metadata() or ""
         doc.close()
         defects = describe_pdf_defects()
-        has_pdfa_ns = "aiim.org/pdfa/ns/id/" in xmp
-        has_conformance = bool(_PDFA_CONFORMANCE_RE.search(xmp))
-        if has_pdfa_ns and has_conformance:
-            return True, "PDF/A conformance marker found", "PDF/A", defects
-        return False, "Non-archival PDF", "PDF", defects
+
+        profile, note = _pdfa_profile(xmp)
+        if profile is None:
+            return False, ["Non-archival PDF"], "PDF", defects
+
+        flavor = f"PDF/A-{profile}"
+        issues = [note] if note else []
+
+        if "?" in profile:
+            # An incomplete claim is judged on the half that is present.
+            # "3?" is already ruled out; "2?" is not; "?B" could be any part,
+            # so it is admitted on the note alone rather than assumed to be
+            # the one excluded part.
+            part = profile[0]
+            admitted = part == "?" or part in _PDFA_ADMITTED_PARTS
+        else:
+            admitted = profile in PDFA_ADMITTED
+
+        if admitted:
+            return True, issues, flavor, defects
+
+        # A real profile we decline, versus a claim that is not a profile at
+        # all (1U, part 5). Both are rejected; saying which keeps the archivist
+        # from hunting for a policy that was never the problem.
+        if profile in _PDFA_DEFINED or "?" in profile:
+            issues.append(f"{flavor} is not an accepted PDF/A profile")
+        else:
+            issues.append(f"{flavor} is not a recognised PDF/A profile")
+        return False, issues, flavor, defects
     except Exception as exc:
         # The buffer is global and cumulative, so it must be cleared even on
         # the failure path or the next file inherits these messages.
         describe_pdf_defects()
-        return False, f"PDF error: {exc}", _filetype_fallback(filepath), []
+        return False, [f"PDF error: {exc}"], _filetype_fallback(filepath), []
 
 
 def screen_file(filepath: Path) -> Tuple[bool, dict]:
@@ -259,12 +379,13 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
 
     # PDF path
     if suffix == ".pdf":
-        ok, msg, flavor, defects = _check_pdf_a1b(filepath)
+        ok, pdfa_issues, flavor, defects = _check_pdfa_profile(filepath)
         props["format"]  = flavor
+        # Always recorded: an admitted file can still have something to say
+        # (an incomplete marker). Only the verdict gates the Reject flag.
+        props["format_issues"].extend(pdfa_issues)
         if not ok:
-            props["format_issues"].append(msg)
             props["repair_issues"].append("Reject")
-            ok = False
         # Extract creation date and page count from PDF metadata.
         try:
             doc = fitz.open(str(filepath))

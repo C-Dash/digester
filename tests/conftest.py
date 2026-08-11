@@ -54,11 +54,47 @@ def make_multiframe_tiff(path: Path, frames: int = 2, size=(8, 8)) -> Path:
     return path
 
 
-def make_pdf(path: Path, pages: int = 1) -> Path:
-    """Plain (non-PDF/A) PDF with the given page count."""
+_PDFA_XMP = """<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="" xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/">
+{fields}
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>"""
+
+
+def make_pdf(path: Path, pages: int = 1, *, part=None, conformance=None,
+             pdfa_ns: bool = None, extra_xmp: str = "") -> Path:
+    """PDF with the given page count; plain (non-PDF/A) by default.
+
+    Pass `part` and/or `conformance` to stamp a real pdfaid XMP packet, so
+    PDF/A tests screen an actual file rather than asserting against a regex.
+    Either may be given alone, to build the incomplete-marker cases.
+
+    `pdfa_ns` forces the namespace declaration on or off independently of the
+    values (defaults to on when either value is given); `extra_xmp` injects
+    additional markup, used to reproduce the embedded extension-schema
+    boilerplate that some real files carry.
+    """
     doc = fitz.open()
     for _ in range(pages):
         doc.new_page()
+
+    if pdfa_ns is None:
+        pdfa_ns = part is not None or conformance is not None
+    if pdfa_ns:
+        fields = []
+        if part is not None:
+            fields.append(f"   <pdfaid:part>{part}</pdfaid:part>")
+        if conformance is not None:
+            fields.append(
+                f"   <pdfaid:conformance>{conformance}</pdfaid:conformance>")
+        if extra_xmp:
+            fields.append(extra_xmp)
+        doc.set_xml_metadata(_PDFA_XMP.format(fields="\n".join(fields)))
+
     doc.save(str(path))
     doc.close()
     return path

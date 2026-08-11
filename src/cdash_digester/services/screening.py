@@ -7,9 +7,8 @@ all cache logic lives here.
 from pathlib import Path
 from typing import Tuple
 
-from ..models import split_format_issues
+from ..models import split_format_issues, split_repair_issues
 from ..prescreener import screen_file
-from ..repair_media import parse_repair_issues
 
 
 class ScreeningService:
@@ -45,7 +44,10 @@ class ScreeningService:
                 "date_source":   cached["date_source"],
                 "format_issues": split_format_issues(
                     cached["format_issues"]),
-                "repair_issues": parse_repair_issues(cached["repair_issues"]),
+                # Split, not parse: a cache hit must reproduce exactly what the
+                # prescreener returned on the miss that filled it, or a code
+                # changes appearance from one scan to the next.
+                "repair_issues": split_repair_issues(cached["repair_issues"]),
                 "pdf_pages":     cached["pdf_pages"],
             }
             return cached["accepted"], props

@@ -8,8 +8,6 @@ cdash_objects.py alongside BatchDB, which meant db/repositories.py imported
 to be broken with a function-local import.
 """
 
-# Document type code → human description. Fixed vocabulary; the GUI's Assign
-# Metadata dialog renders this in order.
 # Separator used to join cdash_media.filename_issues into one column.
 FILENAME_ISSUE_SEP = ", "
 
@@ -19,6 +17,8 @@ FILENAME_ISSUE_SEP = ", "
 # Metadata supplies the missing type — and db/ must not import from services/.
 NEEDS_DOC_TYPE_NOTE = "Needs Doc Type"
 
+# Document type code → human description. Fixed vocabulary; the GUI's Assign
+# Metadata dialog renders this in order.
 DOC_TYPES: dict[str, str] = {
     "VE": "Exterior View",
     "VI": "Interior View",
@@ -36,6 +36,25 @@ DOC_TYPES: dict[str, str] = {
     "DM": "Demolition Memo",
     "UC": "Uncategorized",
 }
+
+# Separator between the place and the document type in a document title.
+# A plain hyphen-minus, deliberately: an em dash had crept into the scanner's
+# copy of this format string while both assignment paths used "-", so the same
+# document was titled differently depending on which one created it.
+DOC_TITLE_SEP = " - "
+
+
+def format_doc_title(place: str, doc_type_code: str) -> str:
+    """Build a document title: "<place> - <document type description>".
+
+    The single definition of the format. It was inlined at three call sites,
+    which is how the separators drifted apart in the first place. An
+    unrecognised 2-letter code shows itself; an absent one reads
+    "Uncategorized".
+    """
+    description = DOC_TYPES.get(doc_type_code, doc_type_code or "Uncategorized")
+    return f"{place}{DOC_TITLE_SEP}{description}"
+
 
 # Place property keys shared by the validator output, the cdash_place working
 # table, and the cdash_place_cache table.

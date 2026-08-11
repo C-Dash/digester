@@ -26,8 +26,14 @@ from typing import Iterable, List, Optional
 # cdash_media stores both issue lists as delimited strings. The delimiters and
 # the join/split pairs live here — a leaf module both db/ and services/ can
 # import — so no caller has to hand-roll the inverse of another's join.
-# repair_media.parse_repair_issues remains the canonical *parser* for repair
-# issues, since it also normalizes each code.
+#
+# Both lists get a join *and* a split. repair_issues had only a join, so the
+# one caller that needed to read a stored value back reached for
+# repair_media.parse_repair_issues instead — which lower-cases every code
+# because it exists to make matching case-insensitive. The result was a code
+# that displayed as "Reject" on the scan that produced it and "reject" on the
+# next scan, once the value came back from the file cache. Restoring a stored
+# value and normalizing one for comparison are different jobs; keep them apart.
 
 FORMAT_ISSUE_SEP = "|"
 REPAIR_ISSUE_SEP = ", "
@@ -43,6 +49,17 @@ def split_format_issues(value: Optional[str]) -> List[str]:
 
 def join_repair_issues(issues: Optional[Iterable[str]]) -> str:
     return REPAIR_ISSUE_SEP.join(issues or [])
+
+
+def split_repair_issues(value: Optional[str]) -> List[str]:
+    """Exact inverse of join_repair_issues: codes as stored, case preserved.
+
+    Use this to read a stored value back. Use repair_media.parse_repair_issues
+    when comparing against a known code — it normalizes, so it is the right
+    tool for matching and the wrong one for display.
+    """
+    return [part.strip() for part in value.split(REPAIR_ISSUE_SEP.strip())
+            if part.strip()] if value else []
 
 
 class Row:
