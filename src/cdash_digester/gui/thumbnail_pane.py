@@ -26,6 +26,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from ..pdf_util import drain_pdf_messages
+
 from .status_colors import status_color as _border_color
 
 # ---------------------------------------------------------------------------
@@ -49,7 +51,11 @@ def _render_pdf_page(filepath: Path) -> QPixmap:
         page = doc[0]
         pix = page.get_pixmap(matrix=fitz.Matrix(1, 1))
         doc.close()
-        fitz.TOOLS.mupdf_warnings(reset=True)
+        # Rendering a defective PDF makes MuPDF complain again. The prescreener
+        # already recorded those complaints against the file, so here the drain
+        # exists only to keep the global buffer from growing across a folder of
+        # thumbnails; importing pdf_util is what keeps them off the console.
+        drain_pdf_messages()
         qi = QImage(pix.samples, pix.width, pix.height,
                     pix.stride, QImage.Format_RGB888)
         pm = QPixmap.fromImage(qi)
@@ -57,6 +63,7 @@ def _render_pdf_page(filepath: Path) -> QPixmap:
                          Qt.SmoothTransformation)
         return result
     except Exception:
+        drain_pdf_messages()   # never carry this file's messages to the next
         return _blank()
 
 

@@ -109,7 +109,44 @@ Key tables: `cdash_batch`, `cdash_folder`, `cdash_place`, `cdash_doc`, `cdash_me
 |--------|-------|
 | JPEG | 24-bit RGB, ≤ 100 MB, ≤ 108 MP |
 | TIFF | 24-bit RGB or 8-bit grayscale (L), LZW compression (tag 259 = 5), single-frame |
-| PDF | Accepted; logs if PDF/A-1b conformance marker is absent |
+| PDF | Accepted; logs if PDF/A-1b conformance marker is absent. Also probed for structural defects — see below |
+
+### MuPDF messages (`pdf_util.py`)
+
+MuPDF reports malformed PDFs through two channels, and PyMuPDF wires them up
+differently: **warnings** are buffered only, but **errors** are also written
+straight to **file descriptor 1 (stdout)** — not stderr, and not through any
+Python mechanism, so nothing could catch them and lines like
+`MuPDF error: format error: No common ancestor in structure tree` appeared in
+the console with no indication of which file caused them.
+
+`pdf_util` turns that display off at import (importing it is what silences the
+console, so every module that opens a PDF imports it) and returns the messages
+instead, via `drain_pdf_messages()` / `describe_pdf_defects()`. Nothing is lost:
+the text stays in the same buffer either way. The buffer is **global and
+cumulative**, so every `fitz` call site must drain it or the next file inherits
+the previous one's messages.
+
+The prescreener folds the result into `format_issues` as
+`PDF structure: <message>`. These are recorded, not rejected — MuPDF recovers,
+and a broken tagged-structure tree does not disqualify PDF/A-1**b** (it would
+disqualify 1**a**). Recovery chatter ("trying to repair…") and MuPDF's
+"… repeated N times…" marker are filtered out.
+
+**Screening has to provoke these messages**, because MuPDF only complains when
+it reads the structure the problem lives in. Measured against the real test
+batch, each stage finds what the earlier ones cannot:
+
+| Stage | Finds |
+|---|---|
+| `fitz.open` | file-level damage (`xref`, `startxref`) |
+| `load_page` (every page) | bad page tree, damaged page object |
+| `get_pixmap` (page 1, 0.15×) | anything only visible when rasterising — including `No common ancestor in structure tree` |
+
+The rasterising probe is why a defective file no longer screens as clean and
+then surprises you at thumbnail time. It costs ~10–20 ms per PDF (even for a
+107 MB one) and is paid once, since screening results are cached in
+`cdash_file_cache`. Page 1 only — every page would be ~10 ms each.
 
 ## Repair Issue Codes
 
@@ -135,7 +172,9 @@ Issue codes are normalized: lowercase, hyphens → underscores (so `Reject` is m
 
 - `PySide6` — GUI framework
 - `Pillow` — image reading, mode checks, frame counting, repair transforms
-- `PyMuPDF (fitz)` — PDF metadata and XMP parsing
+- `PyMuPDF (fitz)` — PDF metadata and XMP parsing; its console output is
+  intercepted by `pdf_util.py` (see above), which every PDF-touching module
+  must import for that reason
 - `filetype` — pure-Python, no binary deps; magic-byte fallback in `prescreener.py` to identify a short format description (e.g. "ZIP", "MP4") for files PIL can't open
 - `exiftool` (external executable, called via one-shot subprocess in `exiftool_util.read_tags`) — EXIF Orientation, HostComputer, DateTimeOriginal
 

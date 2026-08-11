@@ -55,6 +55,8 @@ from PIL.ExifTags import TAGS
 import fitz  # pymupdf
 
 from .exiftool_util import read_tags
+# Importing pdf_util is also what silences MuPDF's console output — see there.
+from .pdf_util import describe_pdf_defects
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -133,8 +135,8 @@ def _filetype_fallback(filepath: Path) -> str:
     return "Unreadable"
 
 
-def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
-    """Return (ok, message, flavor) for PDF/A conformance via XMP marker.
+def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str, list]:
+    """Return (ok, message, flavor, defects) for PDF/A conformance via XMP marker.
 
     Checks for the pdfaid namespace URI and a conformance value (A/B/U/E/F)
     in either element or attribute form, regardless of the namespace prefix
@@ -142,19 +144,28 @@ def _check_pdf_a1b(filepath: Path) -> Tuple[bool, str, str]:
 
     flavor is "PDF/A" when the conformance marker is present, "PDF" when
     absent, "Unreadable" if the PDF itself can't be opened.
+
+    `defects` carries anything MuPDF complained about while reading the file
+    (see pdf_util). These do not make the file unreadable — MuPDF recovers —
+    so they are recorded rather than rejected, and are relevant here because a
+    malformed structure tree is exactly what disqualifies an otherwise
+    well-formed PDF from tagged (PDF/A-1a) conformance.
     """
     try:
         doc = fitz.open(str(filepath))
         xmp = doc.get_xml_metadata() or ""
         doc.close()
-        fitz.TOOLS.mupdf_warnings(reset=True)
+        defects = describe_pdf_defects()
         has_pdfa_ns = "aiim.org/pdfa/ns/id/" in xmp
         has_conformance = bool(_PDFA_CONFORMANCE_RE.search(xmp))
         if has_pdfa_ns and has_conformance:
-            return True, "PDF/A conformance marker found", "PDF/A"
-        return False, "Non-archival PDF", "PDF"
+            return True, "PDF/A conformance marker found", "PDF/A", defects
+        return False, "Non-archival PDF", "PDF", defects
     except Exception as exc:
-        return False, f"PDF error: {exc}", _filetype_fallback(filepath)
+        # The buffer is global and cumulative, so it must be cleared even on
+        # the failure path or the next file inherits these messages.
+        describe_pdf_defects()
+        return False, f"PDF error: {exc}", _filetype_fallback(filepath), []
 
 
 def screen_file(filepath: Path) -> Tuple[bool, dict]:
@@ -248,7 +259,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
 
     # PDF path
     if suffix == ".pdf":
-        ok, msg, flavor = _check_pdf_a1b(filepath)
+        ok, msg, flavor, defects = _check_pdf_a1b(filepath)
         props["format"]  = flavor
         if not ok:
             props["format_issues"].append(msg)
@@ -259,14 +270,45 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             doc = fitz.open(str(filepath))
             raw = (doc.metadata or {}).get("creationDate", "") or ""
             props["pdf_pages"] = doc.page_count
+            # MuPDF only reports a problem when it has to read the structure
+            # the problem lives in, so screening has to provoke it. Measured
+            # against the real test batch, each stage finds things the earlier
+            # ones do not:
+            #   open        — file-level damage (xref, startxref)
+            #   load_page   — bad page tree / damaged page object
+            #   get_pixmap  — everything that only shows up in rasterising,
+            #                 including "No common ancestor in structure tree"
+            #                 (a broken tagged-structure tree, which MuPDF then
+            #                 ignores: "assume tree is missing")
+            # Without the last stage such a file screened as perfectly clean
+            # and the complaint first appeared as an unattributed
+            # "MuPDF error:" line on the console when its thumbnail drew.
+            for page_index in range(doc.page_count):
+                doc.load_page(page_index)
+            # Page 1 only, and at a small scale: the pixmap is thrown away, we
+            # want the side effect. ~10-20 ms per file, paid once because
+            # screening results are cached in cdash_file_cache. Rasterising
+            # every page would be ~10 ms each — too much for a long document,
+            # and page 1 is what the thumbnail renders anyway.
+            if doc.page_count:
+                doc.load_page(0).get_pixmap(matrix=fitz.Matrix(0.15, 0.15))
             doc.close()
-            fitz.TOOLS.mupdf_warnings(reset=True)
+            # Defects are collected from both passes and merged below.
+            defects += describe_pdf_defects()
             if raw.startswith("D:") and len(raw) >= 10:
                 digits = raw[2:10]   # YYYYMMDD
                 props["capture_date"] = f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
                 props["date_source"]  = "pdf"
         except Exception:
-            pass
+            defects += describe_pdf_defects()
+
+        # MuPDF's own complaints about the file, recorded whether or not the
+        # PDF/A check passed: a conforming PDF can still have a defective
+        # structure tree, and that is worth carrying into the catalog. Both
+        # passes read the same file, so the same complaint can arrive twice.
+        for defect in defects:
+            if defect not in props["format_issues"]:
+                props["format_issues"].append(defect)
         if props["capture_date"] is None:
             _set_filesystem_date(props, filepath)
         return ok, props
@@ -446,8 +488,17 @@ def main():
                 for line in xmp[:800].splitlines():
                     print(f"    {line}")
             doc.close()
-            fitz.TOOLS.mupdf_warnings(reset=True)
+            # This is the inspector, so MuPDF's complaints are the point —
+            # printed deliberately and labelled, rather than appearing as raw
+            # "MuPDF error:" lines from the C library at an unpredictable spot
+            # in the output.
+            defects = describe_pdf_defects()
+            if defects:
+                print(f"\n  structural complaints from MuPDF:")
+                for d in defects:
+                    print(f"    {d}")
         except Exception as exc:
+            describe_pdf_defects()
             print(f"\nCannot open PDF: {exc}")
 
     print()
