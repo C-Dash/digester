@@ -10,6 +10,15 @@ to be broken with a function-local import.
 
 # Document type code → human description. Fixed vocabulary; the GUI's Assign
 # Metadata dialog renders this in order.
+# Separator used to join cdash_media.filename_issues into one column.
+FILENAME_ISSUE_SEP = ", "
+
+# The name-side note for a document that is indexed and placed but not yet
+# typed. Lives here rather than in services/scanning.py, which raises it,
+# because db/repositories.py has to recognise and retract it when Assign
+# Metadata supplies the missing type — and db/ must not import from services/.
+NEEDS_DOC_TYPE_NOTE = "Needs Doc Type"
+
 DOC_TYPES: dict[str, str] = {
     "VE": "Exterior View",
     "VI": "Interior View",

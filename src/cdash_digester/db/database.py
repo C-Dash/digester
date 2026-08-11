@@ -94,7 +94,8 @@ _SCHEMA = [
         format_issues  TEXT,
         repair_issues TEXT,
         ready        INTEGER DEFAULT 0,
-        filename_issues TEXT
+        filename_issues TEXT,
+        name_ready   INTEGER DEFAULT 0
     )""",
     # ------ folder cache (persists across scans; validator results)
     """CREATE TABLE IF NOT EXISTS cdash_folder_cache (
@@ -146,6 +147,7 @@ _MIGRATIONS = [
     ("cdash_batch", "documents_count", "INTEGER DEFAULT 0"),
     ("cdash_batch", "media_count",     "INTEGER DEFAULT 0"),
     ("cdash_batch", "repaired_count",  "INTEGER DEFAULT 0"),
+    ("cdash_media", "name_ready",      "INTEGER DEFAULT 0"),
 ]
 
 

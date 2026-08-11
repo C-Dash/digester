@@ -10,10 +10,11 @@ preserved verbatim.
 from datetime import datetime
 from pathlib import Path
 
-from ..constants import DOC_TYPES
+from ..constants import DOC_TYPES, FILENAME_ISSUE_SEP, NEEDS_DOC_TYPE_NOTE
 from ..naming import (
-    DOC_INDEX_DELIM,
-    parse_batch_name, parse_folder_name, parse_media_name, slugify,
+    DOC_INDEX_DELIM, natural_key,
+    parse_batch_name, parse_capture_name, parse_folder_name, parse_media_name,
+    slugify,
 )
 from ..models import join_format_issues, join_repair_issues
 from .validation import PLACE_FOLDER_MISMATCH_NOTE, place_failure_note
@@ -248,17 +249,27 @@ class FolderScanner:
         self.folder_dir = folder_dir
         self.item_set_id = item_set_id
         self.batch_folder_id = batch_folder_id
-        # doc_index → {doc_item_id, place_slug, doc_type, doc_seq, place_id, page_count}
+        # doc_index → {doc_item_id, place_slug, id_slug, doc_type, place_id,
+        #              page_count}. Keyed by the document's index, which is the
+        #              same number the filename carries and the same value
+        #              stored as cdash_doc.folder_doc_sequence.
         self.doc_tracker: dict = {}
         self.slug_place_tracker: dict = {}   # place_slug → place_id
-        self.doc_seq = 0                     # folder_doc_sequence counter
+        # place_slug → doc_index of the capture run currently open for that
+        # slug. A capture file that repeats -OP<id> closes the run and starts a
+        # new document; one that omits it joins the open run as the next page.
+        self.capture_runs: dict = {}
 
     def run(self):
         session = self._session
         # Every file is scanned, regardless of suffix — f.is_file() alone
         # already excludes subdirectories like the repaired/ backup folder.
+        # Sorted naturally, not lexically: capture runs are grouped in file
+        # order and the rename that follows is not reversible, so "Slug-10"
+        # must not overtake "Slug-9".
         media_files = sorted(
-            f for f in self.folder_dir.iterdir() if f.is_file()
+            (f for f in self.folder_dir.iterdir() if f.is_file()),
+            key=lambda f: natural_key(f.name),
         )
         for filepath in media_files:
             self._process_file(filepath)
@@ -280,11 +291,16 @@ class FolderScanner:
         if not accepted:
             session.log(f"    Format issue: {format_issues}", "warning")
 
-        # 2. Name parsing
+        # 2. Name parsing.
+        # A stem is read first as an indexed (canonical or part-canonical) name,
+        # and only then as a field capture name — an indexed stem is never a
+        # capture stem, and trying them the other way round would re-mint an
+        # index for a file that already has one.
         parsed = parse_media_name(filepath.stem)
+        capture = parse_capture_name(filepath.stem) if not parsed else None
         rel_path = str(filepath.relative_to(session.batch_path))
 
-        if not parsed:
+        if not parsed and not capture:
             notes_parts.append("Name not in ready format")
             session.db.insert_media(
                 doc_item_id=None,
@@ -299,23 +315,63 @@ class FolderScanner:
                 format_issues=format_issues,
                 repair_issues=repair_issues,
                 ready=False,
-                filename_issues=", ".join(notes_parts),
+                filename_issues=FILENAME_ISSUE_SEP.join(notes_parts),
             )
             session.log("    Not-ready name.", "info")
             return
 
-        place_slug = parsed["place_slug"]
-        doc_index = parsed["doc_index"]
-        doc_type = parsed["doc_type"]
-        place_id = parsed["place_id"]
+        if parsed:
+            place_slug = parsed["place_slug"]
+            doc_index = parsed["doc_index"]
+            doc_type = parsed["doc_type"]
+            place_id = parsed["place_id"]
 
-        if doc_index in self.doc_tracker and (place_slug == self.doc_tracker[doc_index]["place_slug"] and place_id == None):
-            # same document no place_id
-            place_id = self.doc_tracker[doc_index]["place_id"]
-            doc_type = self.doc_tracker[doc_index]["doc_type"]
-        elif place_id is None and place_slug in self.slug_place_tracker:
-            # same slug seen before — inherit place_id only, not doc_type
-            place_id = self.slug_place_tracker[place_slug]
+            if doc_index in self.doc_tracker and (place_slug == self.doc_tracker[doc_index]["place_slug"] and place_id == None):
+                # same document no place_id
+                place_id = self.doc_tracker[doc_index]["place_id"]
+                # Only fill a doc type in, never overwrite one the name states.
+                doc_type = doc_type or self.doc_tracker[doc_index]["doc_type"]
+            elif place_id is None and place_slug in self.slug_place_tracker:
+                # same slug seen before — inherit place_id only, not doc_type
+                place_id = self.slug_place_tracker[place_slug]
+        else:
+            # Capture name: an index has to be minted, or inherited from the
+            # run this file continues. doc_index stays None until step 3b,
+            # because a new document is only opened once its place is known.
+            place_slug = capture["place_slug"]
+            doc_type = capture["doc_type"]
+            place_id = capture["place_id"]
+            doc_index = None
+
+            open_run = self.capture_runs.get(place_slug)
+            if place_id is None and open_run is not None:
+                # Continues the open run: the absence of -OP<id> is what marks
+                # this file as another page rather than a new document.
+                doc_index = open_run
+                entry = self.doc_tracker[doc_index]
+                place_id = entry["place_id"]
+                doc_type = doc_type or entry["doc_type"]
+            elif place_id is None:
+                # Nothing to attach it to — a capture name with no place ID and
+                # no run in progress carries no document identity at all.
+                notes_parts.append("Name not in ready format")
+                session.db.insert_media(
+                    doc_item_id=None,
+                    item_set_id=item_set_id,
+                    filename=filepath.name,
+                    filepath=rel_path,
+                    capture_date=props.get("capture_date"),
+                    file_size_mb=props.get("file_size_mb"),
+                    pixel_width=props.get("pixel_width"),
+                    pixel_height=props.get("pixel_height"),
+                    format=props.get("format"),
+                    format_issues=format_issues,
+                    repair_issues=repair_issues,
+                    ready=False,
+                    filename_issues=FILENAME_ISSUE_SEP.join(notes_parts),
+                )
+                session.log("    Not-ready name.", "info")
+                return
 
         # 3. Place validation (cache → API)
         # place_ok is the single answer to "did this place resolve?". It used
@@ -327,7 +383,7 @@ class FolderScanner:
             p_status, p_name = self._validation.ensure_place(place_id)
             if "Valid" in p_status:
                 place_ok = True
-                place_name = p_name or parsed["place_slug"]
+                place_name = p_name or place_slug
                 if not self._validation.place_associated_with_folder(
                         place_id, item_set_id):
                     notes_parts.insert(0, PLACE_FOLDER_MISMATCH_NOTE)
@@ -350,19 +406,38 @@ class FolderScanner:
         # pre-rename name until the next scan corrected it.
         # When the place is missing or unresolved the rename is skipped, so the
         # parsed slug is the right fallback: it still matches the filename.
-        id_slug = slugify(place_name) if place_ok else parsed["place_slug"]
+        id_slug = slugify(place_name) if place_ok else place_slug
 
-        media_ready = accepted and not notes_parts
+        # A document with no type yet is registered and named, but is never
+        # name-ready: the canonical stem is still missing its -<DT> segment.
+        if doc_type is None:
+            notes_parts.append(NEEDS_DOC_TYPE_NOTE)
 
-        # 4. Doc tracking / creation
+        name_ready = not notes_parts
+        media_ready = accepted and name_ready
+
+        # 3b. Mint the document index for a capture name that opens a new
+        # document. Deferred to here so the index is drawn after place
+        # validation, keeping the numbering contiguous for the common case.
+        if doc_index is None:
+            doc_index = session.db.next_doc_index(item_set_id)
+
+        # 4. Doc tracking / creation.
+        # doc_index is the document's number everywhere: it is what the
+        # filename carries, what is stored as folder_doc_sequence, and what
+        # both identifiers below are built from. There is no separate
+        # scan-order counter — one existed, and it made identifiers disagree
+        # with the filenames whenever a folder was not numbered from 0001.
+        type_suffix = f"-{doc_type}" if doc_type else ""
         if doc_index not in self.doc_tracker:  # New Document
-            self.doc_seq += 1
             batch_doc_id = (
-                f"{batch_folder_id}-{id_slug}-{self.doc_seq:04d}-{doc_type}"
+                f"{batch_folder_id}-{id_slug}-{doc_index:04d}{type_suffix}"
             )
+            # An unrecognised 2-letter code still shows itself, as before; only
+            # a genuinely absent type falls back to "Uncategorized".
             doc_title = (
-                f"{place_name or parsed['place_slug']} — "
-                f"{DOC_TYPES.get(doc_type, doc_type)}"
+                f"{place_name or place_slug} — "
+                f"{DOC_TYPES.get(doc_type, doc_type or 'Uncategorized')}"
             )
             doc_item_id = session.db.insert_doc(
                 # Never write an unverified place: cdash_doc.place_item_id is a
@@ -371,7 +446,7 @@ class FolderScanner:
                 # and aborted the whole scan over one typo'd filename.
                 place_item_id=place_id if place_ok else None,
                 item_set_id=item_set_id,
-                folder_doc_sequence=self.doc_seq,
+                folder_doc_sequence=doc_index,
                 doc_type_code=doc_type,
                 doc_title=doc_title,
                 batch_doc_id=batch_doc_id,
@@ -383,19 +458,23 @@ class FolderScanner:
                 # place_slug stays "as parsed from the filename" — the
                 # doc-index conflict check below compares it against the next
                 # file's parsed slug, so it must not hold the resolved value.
-                "place_slug":   parsed["place_slug"],
+                "place_slug":   place_slug,
                 # id_slug is the canonical slug used for names and identifiers.
                 "id_slug":      id_slug,
                 "doc_type":     doc_type,
-                "doc_seq":      self.doc_seq,
                 # None when unresolved, so later pages of this document don't
                 # inherit an id that will not validate.
                 "place_id":     place_id if place_ok else None,
                 "page_count":   0,
             }
+            if capture:
+                # This capture file opened a document; later files with the
+                # same slug and no -OP<id> become its pages. A slug can only
+                # have one run open, so this also closes any earlier one.
+                self.capture_runs[place_slug] = doc_index
         else:
             doc_item_id = self.doc_tracker[doc_index]["doc_item_id"]
-            if parsed["place_slug"] != self.doc_tracker[doc_index]["place_slug"]:
+            if place_slug != self.doc_tracker[doc_index]["place_slug"]:
                 msg = (
                     f"doc_index {doc_index:04d} conflicts with existing "
                     f"place name — skipped."
@@ -416,10 +495,11 @@ class FolderScanner:
         self.doc_tracker[doc_index]["page_count"] += 1
         page_num = self.doc_tracker[doc_index]["page_count"]
         entry = self.doc_tracker[doc_index]
+        entry_suffix = f"-{entry['doc_type']}" if entry["doc_type"] else ""
         batch_media_id = (
             f"{batch_folder_id}-{entry['id_slug']}"
-            f"{DOC_INDEX_DELIM}{entry['doc_seq']:04d}p{page_num:04d}"
-            f"-{entry['doc_type']}"
+            f"{DOC_INDEX_DELIM}{doc_index:04d}p{page_num:04d}"
+            f"{entry_suffix}"
         )
         session.db.increment_doc_pages(
             doc_item_id,
@@ -435,10 +515,14 @@ class FolderScanner:
         # built from — so the filename and the identifier always agree, and
         # every page of a document is named for that document's place.
         if place_ok:
+            # The -<DT> segment is omitted while the document type is unknown;
+            # the name is still fully re-parseable, so the next scan reads the
+            # index back rather than minting a new one, and Assign Metadata
+            # completes the stem once a type is chosen.
             new_stem = (
                 f"{entry['id_slug']}{DOC_INDEX_DELIM}"
                 f"{doc_index:04d}p{page_num:04d}"
-                f"-{doc_type}-OP{place_id}"
+                f"{entry_suffix}-OP{place_id}"
             )
             new_name = f"{new_stem}{filepath.suffix.lower()}"
             if new_name != filepath.name:
@@ -472,5 +556,6 @@ class FolderScanner:
             format_issues=format_issues,
             repair_issues=repair_issues,
             ready=media_ready,
-            filename_issues=", ".join(notes_parts),
+            filename_issues=FILENAME_ISSUE_SEP.join(notes_parts),
+            name_ready=name_ready,
         )

@@ -186,6 +186,9 @@ class BatchDB:
                                      doc_title, batch_doc_id, date_accepted,
                                      ready, notes)
 
+    def next_doc_index(self, item_set_id):
+        return self._docs.next_doc_index(item_set_id)
+
     def get_doc(self, doc_item_id):
         return self._docs.get_doc(doc_item_id)
 
@@ -204,12 +207,13 @@ class BatchDB:
                      batch_media_id=None, page_num=0, capture_date=None,
                      file_size_mb=None, pixel_width=None, pixel_height=None,
                      format=None, format_issues="", repair_issues="",
-                     ready=False, filename_issues=""):
+                     ready=False, filename_issues="", name_ready=False):
         return self._media.insert_media(doc_item_id, item_set_id, filename,
                                         filepath, batch_media_id, page_num,
                                         capture_date, file_size_mb, pixel_width,
                                         pixel_height, format, format_issues,
-                                        repair_issues, ready, filename_issues)
+                                        repair_issues, ready, filename_issues,
+                                        name_ready)
 
     def get_media(self, media_id):
         return self._media.get_media(media_id)

@@ -79,8 +79,10 @@ class AssignmentService:
         folder_row = session.db.get_folder_by_item_set(item_set_id)
         batch_folder_id = (folder_row.batch_folder_id or "") if folder_row else ""
 
-        docs = session.db.get_docs_for_folder(item_set_id)
-        next_seq = max((d.folder_doc_sequence for d in docs), default=0) + 1
+        # The one document-index allocator, shared with the scanner: max in use
+        # + 1, never re-using a number. The single-page branch below walks
+        # forward from here so its N new documents stay contiguous.
+        next_seq = session.db.next_doc_index(item_set_id)
 
         # For multi-page No Change doc_type: use first file's type.
         if type_no_change:
@@ -161,7 +163,7 @@ class AssignmentService:
                         next_seq += 1
                         continue
 
-                    eff_title    = f"{eff_place_name} — {DOC_TYPES.get(effective_type, effective_type)}"
+                    eff_title    = f"{eff_place_name} - {DOC_TYPES.get(effective_type, effective_type)}"
                     batch_doc_id = f"{batch_folder_id}-{eff_slug}-{next_seq:04d}-{effective_type}"
                     doc_id = session.db.insert_doc(
                         place_item_id=eff_place_id,
@@ -194,14 +196,14 @@ class AssignmentService:
             return False
 
     def _rename_media(self, media_id: int, place_id: int, place_slug: str,
-                      doc_seq: int, page_num: int, doc_type: str):
+                      doc_index: int, page_num: int, doc_type: str):
         session = self._session
         row = session.db.get_media(media_id)
         if not row:
             return
         old_path = session.batch_path / row.filepath
         new_name = (
-            f"{place_slug}{DOC_INDEX_DELIM}{doc_seq:04d}p{page_num:04d}"
+            f"{place_slug}{DOC_INDEX_DELIM}{doc_index:04d}p{page_num:04d}"
             f"-{doc_type}-OP{place_id}{old_path.suffix.lower()}"
         )
         new_path = old_path.parent / new_name

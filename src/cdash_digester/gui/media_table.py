@@ -24,8 +24,11 @@ from PySide6.QtWidgets import (
 
 from .status_colors import status_color, status_text
 
-_COLUMNS  = ["filename", "ready", "repair_issues",  "filename_issues", "doc_type_code", "page_num", "format", "format_issues" ]
-_HEADERS  = ["Filename",  "Status",  "Repair Issues",   "Name Issues", "Type",          "Page",    "Format", "Format Notes"]
+_COLUMNS  = ["filename", "ready", "name_ready", "repair_issues",  "filename_issues", "doc_type_code", "page_num", "format", "format_issues" ]
+_HEADERS  = ["Filename",  "Status", "Name",     "Repair Issues",   "Name Issues", "Type",          "Page",    "Format", "Format Notes"]
+
+# Columns rendered as a go/no-go status rather than a raw value.
+_STATUS_COLUMNS = ("ready", "name_ready")
 
 
 class _MediaModel(QAbstractTableModel):
@@ -60,11 +63,11 @@ class _MediaModel(QAbstractTableModel):
             col = _COLUMNS[index.column()]
             # _COLUMNS names entity fields, so this is a dynamic attribute read.
             val = getattr(row, col)
-            if col == "ready":
+            if col in _STATUS_COLUMNS:
                 return status_text(val)
             return "" if val is None else str(val)
-        if role == Qt.ForegroundRole and _COLUMNS[index.column()] == "ready":
-            return QBrush(QColor(status_color(row.ready)))
+        if role == Qt.ForegroundRole and _COLUMNS[index.column()] in _STATUS_COLUMNS:
+            return QBrush(QColor(status_color(getattr(row, _COLUMNS[index.column()]))))
         if role == Qt.UserRole:
             return row.media_id
         return None

@@ -145,6 +145,10 @@ class Media(Row):
     repair_issues: Optional[str] = None
     ready: bool = False
     filename_issues: Optional[str] = None
+    # Name-side readiness, separate from `ready` (which also requires the file
+    # to pass format screening). True only when every token the canonical stem
+    # needs — doc index, page, doc type and a *validated* place — is present.
+    name_ready: bool = False
 
 
 @dataclasses.dataclass(frozen=True)

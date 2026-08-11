@@ -53,13 +53,22 @@ touches the DB or a service directly — every call goes through `Digester`.
     `batch_folder_id` — and the `batch_doc_id`/`batch_media_id` identifiers
     exported in `document.csv`/`media.csv` — stable. See
     `ScanService._assign_folder_indices`.
-- **Media file stem**: `<place_slug>-<doc_index>p<page_index>-<doc_type>[-OP<place_id>]`
+- **Media file stem**: `<place_slug>-<doc_index>p<page_index>[-<doc_type>][-OP<place_id>]`
   - e.g. `Mass_Ave-0027p0001-VE-OP43296`
   - The delimiter before `<doc_index>` is **written** as `-`
     (`naming.DOC_INDEX_DELIM`), but `_` is still **accepted** on input so
     legacy names keep parsing — `naming._MEDIA_RE` matches `[-_]` there. A
     legacy `_` name is renamed to the `-` form on its first scan. Note the
     place slug itself may contain `_`; only the delimiter changed.
+  - `<doc_type>` is **optional** — the intermediate form `Mass_Ave-0027p0001-OP43296`
+    is indexed and placed but not yet typed. The scanner writes that form and
+    must be able to read it back, or a rescan would mint a second `doc_index`
+    for a file that already has one. `-OP<id>` cannot be mis-parsed as a doc
+    type: `[A-Z]{2}` can take the `OP`, but the trailing digits then anchor
+    nothing and the match backtracks.
+- **Capture stem** (pre-canonical, as batches arrive from the field):
+  `<place_slug>-<capture_seq>[-<doc_type>][-OP<place_id>]`, parsed by
+  `naming.parse_capture_name`. See "Doc Index and Name Evolution" below.
 - **Doc types**: 2-letter codes — VE (Exterior View), VI (Interior View), RF (Research Form), AI (Architectural Inventory), VP (Plan View), and others — defined in `cdash_objects.DOC_TYPES`
 
 ## Batch Folder Structure
@@ -91,7 +100,8 @@ Key tables: `cdash_batch`, `cdash_folder`, `cdash_place`, `cdash_doc`, `cdash_me
 - `format` TEXT — PIL mode (e.g. `"RGB"`) or PDF flavor (`"PDF"`/`"PDF/A"`); `"Unreadable"` if the file couldn't be opened/decoded/identified
 - `format_issues` TEXT — pipe-delimited, human-readable format/repair/rejection explanations (replaces the old `qa_note`/`qa_parts`)
 - `repair_issues` TEXT — comma-separated issue codes (e.g. `"Reject"` or `"Flatten"`)
-- `filename_issues` TEXT — human-readable name-parsing / place-validation problems (was `notes`; unrelated to format)
+- `filename_issues` TEXT — human-readable name-parsing / place-validation problems (was `notes`; unrelated to format). Problems only — empty means fine.
+- `name_ready` INTEGER (0/1) — whether the *name* has every required token (doc index, page, doc type, validated place). `ready` is `accepted AND name_ready`.
 
 ## Prescreener Acceptance Criteria
 
@@ -235,3 +245,85 @@ ______________________________
 * Have the scanner look at all files in the media folder, not just ones that are admissable. FIles that are not admissable can be rendered as thumbnails, but with a not ready status and a repair issue would consist of "Reject". 
 
 * Currently, a "_" delimiter is allowed in a media file name between the place slug and the doc_index.   We recently changed the regexp in the file name parser to recognize "-" in this position.  In a few weeks, after we have processed some legacy batches, we are going to require the "-".  What we need to do now is start using the "-" doc_index delimiter when assigning file names.  This may have effects on referencing files in the logic of the app.  So be careful. There is no need for complicated migration logic here, since the new release will only be launched against fresh batches with no pre-existing catalog
+
+
+## Doc Index and Name Evolution — DONE
+
+### One document number
+
+`doc_index` (in the filename), `cdash_doc.folder_doc_sequence`, and the number
+inside `batch_doc_id`/`batch_media_id` are **one value**. There used to be a
+second, private counter in `FolderScanner` (`doc_seq`) that restarted at 0 on
+every folder scan; identifiers were built from it while the rename used the
+filename's `doc_index`, so any folder not numbered from 0001 exported
+identifiers that did not describe its own files. That counter is gone.
+
+Identifier composition is unchanged — `place_slug` and `doc_type` stay in:
+- `batch_doc_id`   = `<batch_folder_id>-<id_slug>-<doc_index:04d>[-<doc_type>]`
+- `batch_media_id` = `<batch_folder_id>-<id_slug>-<doc_index:04d>p<page:04d>[-<doc_type>]`
+
+### Minting
+
+`BatchDB.next_doc_index(item_set_id)` is the **only** allocator, shared by the
+scanner and `AssignmentService`: `MAX(folder_doc_sequence) + 1` over the folder.
+Indices are tabulated per folder and never re-used, and gaps are never filled.
+
+No extra storage backs this: a full scan wipes `cdash_doc`, then rebuilds
+`folder_doc_sequence` from the filenames on disk, so **the filenames are the
+persistence**. Docs are inserted as the folder is walked, so a mint later in the
+same scan already sees every index taken earlier in it.
+
+One accepted hole: an index minted for a file whose rename is suppressed
+(because its place did not validate) reaches no filename, so a later scan may
+hand that number elsewhere. Harmless — such a batch is not ready, so nothing
+bearing that identifier can be exported.
+
+Assign Metadata always mints a *fresh* index (it creates new documents), so
+completing a run's doc type renumbers it. That is also what "Each page is its
+own document" does, one fresh index per file.
+
+### Capture-name evolution
+
+Batches arrive named `<slug>-<capture_seq>[-<DT>][-OP<place_id>]`. `capture_seq`
+is the camera's own counter: it orders files within a run and is otherwise
+discarded — page numbers always restart at 1.
+
+`FolderScanner._process_file` reads a stem as an indexed name first
+(`parse_media_name`) and only then as a capture name (`parse_capture_name`), so
+an already-indexed file can never be re-minted.
+
+The grouping rule, keyed on `place_slug` in `self.capture_runs`:
+
+| Capture file | Result |
+|---|---|
+| has `-OP<id>` | validates the place, **mints** a new `doc_index`, opens a run for that slug at page 1 (closing any earlier run for it) |
+| no `-OP<id>`, run open for the slug | next **page** of that run — inherits its `doc_index`, `place_id` and `doc_type` |
+| no `-OP<id>`, no open run | no document identity — registered untouched as "Name not in ready format" |
+
+So repeating `-OP<id>` is how a filename says "new document, same place".
+
+- **Case 1** (`Mass_Ave-1-OP55` …): no doc type. Files are still indexed,
+  registered, and renamed — to the doc-type-less form
+  `Main_Place-0001p0001-OP55` — and flagged `Needs Doc Type`
+  (`scanning.NEEDS_DOC_TYPE_NOTE`). Rescanning is idempotent.
+- **Case 2** (`Mass_Ave-1-VE-OP55` …): the first file's doc type propagates to
+  the whole run; those files are name-ready.
+
+Files are walked in `naming.natural_key` order, not plain lexical order —
+`Slug-10` must not overtake `Slug-9`, because runs are grouped in file order and
+the rename that follows is not reversible. Canonical names are zero-padded and
+sort identically either way.
+
+### `name_ready`
+
+`cdash_media.name_ready` (new column + migration) is the name-side counterpart
+to `ready`: true only when the stem has a doc index, a page, a doc type and a
+**validated** place. `ready` stays `accepted AND name_ready` — it additionally
+requires format screening to pass. `filename_issues` remains problems-only
+(empty means fine), consistent with `format_issues`; the positive label is
+rendered by `gui/media_table.py`, which shows both flags via `status_colors`.
+
+`assign_media_to_doc` sets `name_ready=1` and clears `filename_issues`:
+assignment is the operation that finishes a name, so a file completed through
+the GUI must not keep showing `Needs Doc Type` until the next scan.
+

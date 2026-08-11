@@ -9,7 +9,9 @@ import sqlite3
 from datetime import datetime
 from typing import Optional
 
-from ..constants import DOC_TYPES, PLACE_PROP_KEYS
+from ..constants import (
+    DOC_TYPES, FILENAME_ISSUE_SEP, NEEDS_DOC_TYPE_NOTE, PLACE_PROP_KEYS,
+)
 from ..models import Batch, Folder, Place, Doc, Media, MediaWithDoc
 from ..models import join_format_issues, join_repair_issues
 
@@ -221,6 +223,23 @@ class DocRepo(_Repo):
         self._con.commit()
         return cur.lastrowid
 
+    def next_doc_index(self, item_set_id: int) -> int:
+        """Mint the next document index for a folder: max in use + 1.
+
+        The single allocator for folder_doc_sequence — which is the same number
+        the filename carries as <doc_index>. Indices are never re-used: a full
+        scan rebuilds folder_doc_sequence from the filenames on disk, so the
+        names themselves persist the high-water mark across scans, and docs are
+        inserted as the folder is walked so a mint later in the same scan sees
+        every index already taken.
+        """
+        row = self._con.execute(
+            """SELECT COALESCE(MAX(folder_doc_sequence), 0) + 1 AS next
+               FROM cdash_doc WHERE item_set_id=?""",
+            (item_set_id,),
+        ).fetchone()
+        return row["next"]
+
     def get_doc(self, doc_item_id: int) -> Optional[Doc]:
         return Doc.from_row(self._con.execute(
             "SELECT * FROM cdash_doc WHERE doc_item_id=?", (doc_item_id,)
@@ -284,16 +303,19 @@ class MediaRepo(_Repo):
                      pixel_width: int = None, pixel_height: int = None,
                      format: str = None, format_issues: str = "",
                      repair_issues: str = "",
-                     ready: bool = False, filename_issues: str = "") -> int:
+                     ready: bool = False, filename_issues: str = "",
+                     name_ready: bool = False) -> int:
         cur = self._con.execute(
             """INSERT INTO cdash_media
                (doc_item_id, item_set_id, filename, batch_media_id, filepath,
                 page_num, capture_date, file_size_mb, pixel_width, pixel_height,
-                     format, format_issues, repair_issues, ready, filename_issues)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     format, format_issues, repair_issues, ready, filename_issues,
+                     name_ready)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (doc_item_id, item_set_id, filename, batch_media_id, filepath,
                  page_num, capture_date, file_size_mb, pixel_width, pixel_height,
-                 format, format_issues, repair_issues, int(ready), filename_issues),
+                 format, format_issues, repair_issues, int(ready), filename_issues,
+                 int(name_ready)),
         )
         self._con.commit()
         return cur.lastrowid
@@ -336,11 +358,33 @@ class MediaRepo(_Repo):
 
     def assign_media_to_doc(self, media_id: int, doc_item_id: int, page_num: int,
                             batch_media_id: str = None):
+        """Attach a media file to a document, and mark its name complete.
+
+        Assignment is the operation that *finishes* a name: it supplies a
+        validated place, a doc type and a page, and renames the file to match.
+        So name_ready becomes true here, and the one note assignment actually
+        resolves is retracted — otherwise a file completed through the GUI
+        would keep showing "Needs Doc Type" until the next scan.
+
+        Only that note is dropped. Every other note is left in place, as is
+        `ready`: both can rest on things assignment does not re-examine (format
+        screening above all), so clearing them wholesale would report problems
+        as fixed that nobody has looked at.
+        """
+        row = self._con.execute(
+            "SELECT filename_issues FROM cdash_media WHERE media_id=?", (media_id,)
+        ).fetchone()
+        issues = (row["filename_issues"] or "") if row else ""
+        remaining = FILENAME_ISSUE_SEP.join(
+            part for part in issues.split(FILENAME_ISSUE_SEP)
+            if part and part != NEEDS_DOC_TYPE_NOTE
+        )
         self._con.execute(
             """UPDATE cdash_media
-               SET doc_item_id=?, page_num=?, batch_media_id=?
+               SET doc_item_id=?, page_num=?, batch_media_id=?,
+                   name_ready=1, filename_issues=?
                WHERE media_id=?""",
-            (doc_item_id, page_num, batch_media_id, media_id),
+            (doc_item_id, page_num, batch_media_id, remaining, media_id),
         )
         self._con.commit()
 

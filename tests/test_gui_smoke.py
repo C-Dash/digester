@@ -138,6 +138,27 @@ def test_media_table_status_text_colored_no_row_tint(qtbot):
         assert model.data(other_idx, Qt.BackgroundRole) is None
 
 
+def test_media_table_renders_name_ready_as_a_status(qtbot):
+    """name_ready is the name-side counterpart to ready, and gets the same
+    go/no-go treatment — a file can be format-clean but not yet named."""
+    from PySide6.QtCore import Qt
+    from cdash_digester.gui.media_table import _COLUMNS
+    from cdash_digester.gui.status_colors import status_color, status_text
+
+    pane = MediaTablePane()
+    qtbot.addWidget(pane)
+    pane.load_media([MediaWithDoc.from_row(
+        {"media_id": 1, "filename": "a.tif", "doc_type_code": None,
+         "page_num": 1, "format": "RGB", "format_issues": "",
+         "repair_issues": "", "ready": False, "name_ready": False,
+         "filename_issues": "Needs Doc Type"})])
+    model = pane.model()
+    idx = model.index(0, _COLUMNS.index("name_ready"))
+
+    assert model.data(idx, Qt.DisplayRole) == status_text(False)
+    assert model.data(idx, Qt.ForegroundRole).color().name() == status_color(False)
+
+
 def test_media_table_highlight_selects_all_ids(qtbot):
     pane = MediaTablePane()
     qtbot.addWidget(pane)

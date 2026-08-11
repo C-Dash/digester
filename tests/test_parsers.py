@@ -3,7 +3,8 @@
 import pytest
 
 from cdash_digester.naming import (
-    parse_batch_name, parse_folder_name, parse_media_name, slugify,
+    natural_key, parse_batch_name, parse_capture_name, parse_folder_name,
+    parse_media_name, slugify,
 )
 
 
@@ -114,6 +115,69 @@ def test_parse_media_name_slug_keeps_internal_dashes_and_digits():
 ])
 def test_parse_media_name_rejects(bad):
     assert parse_media_name(bad) is None
+
+
+def test_parse_media_name_doc_type_is_optional():
+    """The intermediate form: indexed, placed, but not yet typed. The scanner
+    writes this and must be able to read it back on the next scan."""
+    r = parse_media_name("Mass_Ave-0027p0001-OP43296")
+    assert r == {
+        "place_slug": "Mass_Ave", "doc_index": 27, "page_index": 1,
+        "doc_type": None, "place_id": 43296,
+    }
+
+
+def test_op_token_is_not_mistaken_for_a_doc_type():
+    """Guard for the ambiguity that making doc_type optional introduces:
+    [A-Z]{2} can match the "OP" of "-OP43296", but the trailing digits then
+    anchor nothing, so the match must backtrack to doc_type=None rather than
+    leave place_id unparsed."""
+    r = parse_media_name("Mass_Ave-0027p0001-OP43296")
+    assert r["doc_type"] is None
+    assert r["place_id"] == 43296
+
+
+# ---------------------------------------------------------------- capture name
+
+@pytest.mark.parametrize("stem,expected", [
+    ("Mass_Ave-3-OP43296",    (3, None, 43296)),
+    ("Mass_Ave-3-VE-OP43296", (3, "VE", 43296)),
+    ("Mass_Ave-3",            (3, None, None)),
+    ("Mass_Ave-3-VE",         (3, "VE", None)),
+])
+def test_parse_capture_name(stem, expected):
+    r = parse_capture_name(stem)
+    assert r["place_slug"] == "Mass_Ave"
+    assert (r["capture_seq"], r["doc_type"], r["place_id"]) == expected
+
+
+@pytest.mark.parametrize("bad", ["noseq", "Mass_Ave-", "Mass_Ave"])
+def test_parse_capture_name_rejects(bad):
+    assert parse_capture_name(bad) is None
+
+
+def test_indexed_stems_are_not_capture_stems():
+    """A canonical stem must never be re-read as a capture name — that would
+    mint a second doc index for a file that already carries one."""
+    for stem in ("Mass_Ave-0027p0001-VE-OP43296",
+                 "Mass_Ave-0027p0001-OP43296",
+                 "Mass_Ave-0027p0001"):
+        assert parse_media_name(stem) is not None
+        assert parse_capture_name(stem) is None
+
+
+# ----------------------------------------------------------------- natural_key
+
+def test_natural_key_orders_digit_runs_numerically():
+    names = ["Slug-10", "Slug-9", "Slug-1", "Slug-2"]
+    assert sorted(names, key=natural_key) == ["Slug-1", "Slug-2", "Slug-9", "Slug-10"]
+
+
+def test_natural_key_agrees_with_plain_sort_on_padded_names():
+    """Canonical names are zero-padded, so applying the natural key to a whole
+    folder listing cannot reorder anything already canonical."""
+    names = ["S-0001p0010-VE", "S-0001p0002-VE", "S-0002p0001-VE"]
+    assert sorted(names, key=natural_key) == sorted(names)
 
 
 # --------------------------------------------------------------------- slugify
