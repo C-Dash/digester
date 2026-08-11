@@ -45,6 +45,10 @@ from typing import Iterable, List, Optional, Tuple
 from PIL import Image
 
 from . import prescreener
+from .constants import (
+    CHECK_MBS_TOKEN, COMPRESS_LZW_TOKEN, FLATTEN_TOKEN,
+    MULTIFRAME_TIFF_TOKEN, REJECT_TOKEN, normalize_repair_issue,
+)
 from .models import REPAIR_ISSUE_SEP
 from .exiftool_util import read_tags, write_orientation
 
@@ -88,9 +92,10 @@ _SAFE_TIFF_METADATA_TAGS = {
 }
 
 
-def _normalize_issue(issue: str) -> str:
-    normalized = issue.strip().lower().replace("-", "_")
-    return normalized
+# Canonical normalization lives in constants.py, beside the code vocabulary it
+# has to agree with. Kept as a module name because this module's own tests and
+# call sites already use it.
+_normalize_issue = normalize_repair_issue
 
 
 def parse_repair_issues(issues: str | Iterable[str] | None) -> List[str]:
@@ -209,7 +214,7 @@ def repair_file(
     if not issues:
         return True, "No issues to repair"
 
-    if "reject" in issues or "multiframe_tiff" in issues:
+    if REJECT_TOKEN in issues or MULTIFRAME_TIFF_TOKEN in issues:
         msg = ("Cannot repair — file is flagged Reject. Use the Reject "
                "action to move it out of the batch.")
         return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,
@@ -257,7 +262,7 @@ def _apply_pixel_repairs_and_commit(
     applied = []
 
     # 1. Flatten -> drop the alpha/16-bit channel to a clean mode
-    if "flatten" in issues:
+    if FLATTEN_TOKEN in issues:
         if img.mode == "RGBA":
             background = Image.new("RGB", img.size, (255, 255, 255))
             background.paste(img, mask=img.split()[3])
@@ -275,7 +280,7 @@ def _apply_pixel_repairs_and_commit(
             applied.append("i;16->l")
 
     # 2. compress_lzw -> LZW applied on save (no pixel transform needed)
-    if "compress_lzw" in issues:
+    if COMPRESS_LZW_TOKEN in issues:
         applied.append("lzw compression applied")
 
     # 3. Rotation (TIFF only, requested by rotate_file() — not repair_file())
@@ -291,7 +296,7 @@ def _apply_pixel_repairs_and_commit(
     # committing anything. Check MBs is TIFF-only by construction (it's only
     # ever paired with Compress LZW for an uncompressed oversized TIFF).
     buf = None
-    if "check_mbs" in issues:
+    if CHECK_MBS_TOKEN in issues:
         buf = io.BytesIO()
         try:
             img.save(buf, format="TIFF", compression="tiff_lzw", **tiff_save_kwargs)
@@ -363,7 +368,7 @@ def rotate_file(
     issues = parse_repair_issues(issues)
     suffix = filepath.suffix.lower()
 
-    if "reject" in issues or "multiframe_tiff" in issues:
+    if REJECT_TOKEN in issues or MULTIFRAME_TIFF_TOKEN in issues:
         msg = ("Cannot rotate — file is flagged Reject. Use the Reject "
                "action to move it out of the batch.")
         return False, msg + _append_repair_reject_csv(catalog_path, filepath, issues, msg,

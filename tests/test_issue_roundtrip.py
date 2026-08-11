@@ -43,15 +43,13 @@ def test_parse_repair_issues_still_normalises_for_matching():
     assert parse_repair_issues("multiframe-tiff") == ["multiframe_tiff"]
 
 
-def test_parse_repair_issues_does_not_convert_spaces():
-    """Pinning current behaviour, which is NOT what every caller assumes:
-    _normalize_issue maps hyphens to underscores but leaves spaces alone, so
-    the prescreener's "Compress LZW" becomes "compress lzw" — while
-    repair_media matches on "compress_lzw". See the note in the session
-    summary; changing this changes repair behaviour, so it is pinned, not
-    silently fixed."""
-    assert parse_repair_issues("Compress LZW") == ["compress lzw"]
-    assert parse_repair_issues("Check MBs") == ["check mbs"]
+def test_parse_repair_issues_folds_spaces_like_hyphens():
+    """Spaces normalize to "_" exactly as hyphens do. They did not, so the
+    prescreener's "Compress LZW" became "compress lzw" while repair_media
+    matched "compress_lzw" — see tests/test_repair_vocabulary.py, which owns
+    that invariant now."""
+    assert parse_repair_issues("Compress LZW") == ["compress_lzw"]
+    assert parse_repair_issues("Check MBs") == ["check_mbs"]
 
 
 @pytest.mark.parametrize("value", [None, ""])

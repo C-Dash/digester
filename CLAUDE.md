@@ -198,10 +198,48 @@ then surprises you at thumbnail time. It costs ~10–20 ms per PDF (even for a
 |------|---------|-----------------|
 | `Flatten` | TIFF is RGBA, LA, or I;16 (16-bit grayscale) mode | Yes — dropped to a clean mode (RGB/L) |
 | `Compress LZW` | TIFF not using LZW compression | Yes — re-saved with LZW compression |
-| `Check MBs` | Uncompressed TIFF exceeds the size limit | Not yet auto-repaired — flagged so a future compress-then-recheck pass can decide; currently always paired with `Compress LZW` |
-| `Reject` | Unsupported file type, multi-frame TIFF, PDF lacking a PDF/A-1b conformance marker, or any other oversized/wrong-format file | **No** — must be handled manually via the Reject action |
+| `Check MBs` | Uncompressed TIFF exceeds the size limit | Yes — compressed into a buffer and re-measured; committed only if it now fits, otherwise **refused** and the file left untouched. Always paired with `Compress LZW` |
+| `Reject` | Unsupported file type, multi-frame TIFF, PDF outside `PDFA_ADMITTED`, or any other oversized/wrong-format file | **No** — must be handled manually via the Reject action |
 
-Issue codes are normalized: lowercase, hyphens → underscores (so `Reject` is matched case-insensitively as `reject`). For a multi-frame TIFF, unsupported file type, or any hard size-limit rejection, `repair_issues` is set to `["Reject"]` only — any other issues detected for that file are discarded in favor of the single `Reject` code.
+For a multi-frame TIFF, unsupported file type, or any hard size-limit rejection, `repair_issues` is set to `["Reject"]` only — any other issues detected for that file are discarded in favor of the single `Reject` code.
+
+### One vocabulary, two spellings
+
+The codes are named once in `constants.py` (`REPAIR_REJECT`, `REPAIR_FLATTEN`,
+`REPAIR_COMPRESS_LZW`, `REPAIR_CHECK_MBS`) — the leaf both ends import, because
+`prescreener.py` *raises* them, `repair_media.py` *matches* them, and
+repair_media already imports prescreener for `MAX_FILE_MB`, so the vocabulary
+cannot live in either without a cycle.
+
+Two forms, and they must not be confused:
+
+- **Canonical** (`"Compress LZW"`) — what is stored in
+  `cdash_media.repair_issues` and shown in the GUI. Read a stored value back
+  with `models.split_repair_issues`, the exact inverse of `join_repair_issues`.
+- **Match token** (`"compress_lzw"`) — lowercase, spaces *and* hyphens folded
+  to `_`, produced by `constants.normalize_repair_issue` (which
+  `repair_media.parse_repair_issues` applies per code). Comparison only:
+  deliberately lossy, so never store or display it. The tokens
+  (`COMPRESS_LZW_TOKEN`, …) are **derived** from the canonical strings by that
+  same function rather than written out, so the two cannot drift.
+
+Both halves of that separation were bugs, found together and fixed together:
+
+1. `normalize_repair_issue` folded hyphens but **not spaces**, so
+   `"Compress LZW"` became `"compress lzw"` while repair_media tested for
+   `"compress_lzw"`. Neither that branch nor `check_mbs` ever ran on a real
+   file. LZW still got applied — the TIFF save path applies it unconditionally
+   — so the only visible symptom was an empty `Repaired: ` in the log. The
+   `Check MBs` refusal, however, was dead code, and a file still over the limit
+   after compression was committed and reported as repaired.
+2. `ScreeningService` read cached values back through `parse_repair_issues`
+   (there was no `split_repair_issues`), so a code displayed as `Reject` on the
+   scan that produced it and `reject` on every scan after.
+
+The existing repair tests passed the underscore spelling directly, which is
+exactly why they missed (1). `tests/test_repair_vocabulary.py` now drives
+`repair_file` with whatever `screen_file` actually produced, and asserts every
+canonical code normalizes to the token used to match it.
 
 `iphone_vert` (EXIF-orientation rotation) has been retired from the prescreener's repair_issues vocabulary — it's no longer detected or flagged. Rotation is now a separate user-initiated action (`Media > Rotate CW / Rotate CCW`, see Phase 2 below), driven by `_ORIENTATION_ROTATE_CW`/`_CCW` and `_get_exif_orientation` in `repair_media.py`. The old `_ORIENTATION_ROTATION`/`_DEFAULT_VERT_ROTATION` tables that were reserved for it went unused once that shipped and have been deleted.
 

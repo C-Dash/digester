@@ -61,6 +61,9 @@ from PIL import Image
 from PIL.ExifTags import TAGS
 import fitz  # pymupdf
 
+from .constants import (
+    REPAIR_CHECK_MBS, REPAIR_COMPRESS_LZW, REPAIR_FLATTEN, REPAIR_REJECT,
+)
 from .exiftool_util import read_tags
 # Importing pdf_util is also what silences MuPDF's console output — see there.
 from .pdf_util import describe_pdf_defects
@@ -335,7 +338,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             if fmt != "Unreadable":
                 props["format"] = fmt
         props["format_issues"].append("Format not supported")
-        props["repair_issues"] = ["Reject"]
+        props["repair_issues"] = [REPAIR_REJECT]
         return False, props
 
     # For TIFFs: check compression before the size check so Compress LZW is
@@ -347,7 +350,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
             img = Image.open(filepath)
             tag_v2 = getattr(img, "tag_v2", {})
             if tag_v2.get(259) != _TIFF_LZW:
-                props["repair_issues"].append("Compress LZW")
+                props["repair_issues"].append(REPAIR_COMPRESS_LZW)
         except Exception:
             img = None  # open failure is surfaced in the main image path below
 
@@ -360,8 +363,8 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         props["file_size_mb"] = mb
         max_mb = MAX_PDF_MB if suffix == ".pdf" else MAX_FILE_MB
         if mb > max_mb:
-            if suffix in (".tif", ".tiff") and "Compress LZW" in props["repair_issues"]:
-                props["repair_issues"].append("Check MBs")
+            if suffix in (".tif", ".tiff") and REPAIR_COMPRESS_LZW in props["repair_issues"]:
+                props["repair_issues"].append(REPAIR_CHECK_MBS)
                 props["format_issues"].append(
                     f"{mb:.1f} MB — exceeds {max_mb} MB limit (uncompressed)"
                 )
@@ -369,12 +372,12 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
                 props["format_issues"].append(
                     f"File too large: {mb:.1f} MB (limit {max_mb} MB)"
                 )
-                props["repair_issues"] = ["Reject"]
+                props["repair_issues"] = [REPAIR_REJECT]
                 return False, props
     except OSError as exc:
         props["format_issues"].append(f"Cannot read file: {exc}")
         props["format"] = _filetype_fallback(filepath)
-        props["repair_issues"] = ["Reject"]
+        props["repair_issues"] = [REPAIR_REJECT]
         return False, props
 
     # PDF path
@@ -385,7 +388,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         # (an incomplete marker). Only the verdict gates the Reject flag.
         props["format_issues"].extend(pdfa_issues)
         if not ok:
-            props["repair_issues"].append("Reject")
+            props["repair_issues"].append(REPAIR_REJECT)
         # Extract creation date and page count from PDF metadata.
         try:
             doc = fitz.open(str(filepath))
@@ -445,13 +448,13 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     except Exception as exc:
         props["format_issues"].append(f"Cannot open image: {exc}")
         props["format"] = _filetype_fallback(filepath)
-        props["repair_issues"] = ["Reject"]
+        props["repair_issues"] = [REPAIR_REJECT]
         return False, props
 
     props["format"] = _MODE_DESCRIPTIONS.get(img.mode, img.mode)
     if img.mode not in _CLEAN_MODES.get(suffix, set()):
         if suffix in (".tif", ".tiff") and img.mode in ("RGBA", "LA", "I;16"):
-            props["repair_issues"].append("Flatten")
+            props["repair_issues"].append(REPAIR_FLATTEN)
         else:
             props["repair_issues"].append(img.mode.lower())
     w, h = img.size
@@ -463,7 +466,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         props["format_issues"].append(
             f"Exceeds 108 MP: {w * h / 1_000_000:.1f} MP ({w}×{h})"
         )
-        props["repair_issues"] = ["Reject"]
+        props["repair_issues"] = [REPAIR_REJECT]
         return False, props
 
     # EXIF capture date via ExifTool (called once; et_tags reused below)
@@ -478,12 +481,12 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     # Format-specific checks
     if suffix in (".jpg", ".jpeg"):
         if img.mode != "RGB":
-            props["repair_issues"] = ["Reject"]
+            props["repair_issues"] = [REPAIR_REJECT]
             return False, props
 
     elif suffix in (".tif", ".tiff"):
         if getattr(img, 'n_frames', 1) > 1:
-            props["repair_issues"] = ["Reject"]
+            props["repair_issues"] = [REPAIR_REJECT]
             props["format_issues"].append("Multi-frame TIFF is not accepted")
             return False, props
 
@@ -493,7 +496,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
         # 32-bit float is non-repairable — return immediately.
         if img.mode == "F":
             props["format_issues"].append("32-bit float TIFFs are not accepted")
-            props["repair_issues"] = ["Reject"]
+            props["repair_issues"] = [REPAIR_REJECT]
             return False, props
 
         # Repairable checks — Compress LZW was already added to repair_issues
@@ -513,7 +516,7 @@ def screen_file(filepath: Path) -> Tuple[bool, dict]:
     except Exception as exc:
         props["format_issues"].append(f"Cannot decode image: {exc}")
         props["format"] = _filetype_fallback(filepath)
-        props["repair_issues"] = ["Reject"]
+        props["repair_issues"] = [REPAIR_REJECT]
         return False, props
 
     return True, props

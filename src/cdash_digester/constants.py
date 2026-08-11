@@ -37,6 +37,52 @@ DOC_TYPES: dict[str, str] = {
     "UC": "Uncategorized",
 }
 
+# ---------------------------------------------------------------------------
+# Repair issue vocabulary
+# ---------------------------------------------------------------------------
+# The canonical spelling of each code, as written to cdash_media.repair_issues
+# and shown in the GUI. These live here, in the leaf both sides can import,
+# because prescreener.py *raises* these codes and repair_media.py *matches*
+# them — and repair_media already imports prescreener (for MAX_FILE_MB), so
+# the vocabulary cannot live in either without a cycle.
+#
+# They were bare string literals at both ends, and the two ends disagreed:
+# the prescreener raised "Compress LZW" / "Check MBs", while repair_media
+# tested for "compress_lzw" / "check_mbs". normalize_repair_issue() only
+# translated hyphens, not spaces, so neither branch ever ran. LZW still got
+# applied — the TIFF save path applies it unconditionally — but the "Check MBs"
+# size re-check, whose whole job is to REFUSE a file that is still oversized
+# after compression, was dead code, and every such file was committed and
+# reported as repaired. Naming the codes once, and deriving the match token
+# from the same string by the same function, is what stops that recurring.
+REPAIR_REJECT = "Reject"
+REPAIR_FLATTEN = "Flatten"
+REPAIR_COMPRESS_LZW = "Compress LZW"
+REPAIR_CHECK_MBS = "Check MBs"
+# No longer raised by the prescreener (a multi-frame TIFF is "Reject" now), but
+# still matched, so a value stored by an older version keeps its meaning.
+REPAIR_MULTIFRAME_TIFF = "multiframe-tiff"
+
+
+def normalize_repair_issue(issue: str) -> str:
+    """Canonical match token for a repair code: lowercase, separators unified.
+
+    Comparison form only — lossy, and never what gets displayed or stored.
+    Whitespace and hyphens both fold to "_", so "Compress LZW", "compress-lzw"
+    and "compress_lzw" are one code.
+    """
+    return "_".join(str(issue).strip().lower().replace("-", " ").split())
+
+
+# Match tokens, derived rather than written out, so a code and the token used
+# to test for it cannot drift apart.
+REJECT_TOKEN = normalize_repair_issue(REPAIR_REJECT)
+FLATTEN_TOKEN = normalize_repair_issue(REPAIR_FLATTEN)
+COMPRESS_LZW_TOKEN = normalize_repair_issue(REPAIR_COMPRESS_LZW)
+CHECK_MBS_TOKEN = normalize_repair_issue(REPAIR_CHECK_MBS)
+MULTIFRAME_TIFF_TOKEN = normalize_repair_issue(REPAIR_MULTIFRAME_TIFF)
+
+
 # Separator between the place and the document type in a document title.
 # A plain hyphen-minus, deliberately: an em dash had crept into the scanner's
 # copy of this format string while both assignment paths used "-", so the same
